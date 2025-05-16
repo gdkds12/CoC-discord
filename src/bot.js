@@ -22,6 +22,8 @@ for (const file of commandFiles) {
     }
 }
 
+console.log('[INFO] 명령어 컬렉션 상태:', client.commands.map(c => c.data.name));
+
 // 이벤트 파일 로드
 const eventsPath = path.join(__dirname, 'events');
 const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'));
@@ -46,7 +48,19 @@ for (const file of eventFiles) {
 
 // Clash API 클라이언트 (추후 구현)
 
+// 봇이 준비되었을 때 실행될 로직
+client.once('ready', () => {
+    console.log('[INFO] 봇이 성공적으로 로그인했습니다.');
+    console.log(`[INFO] 봇 태그: ${client.user.tag}`);
+    console.log('[INFO] 봇이 접속한 길드 목록:');
+    client.guilds.cache.forEach(guild => {
+        console.log(`- ${guild.name} (ID: ${guild.id})`);
+    });
+    console.log('[INFO] 로드된 명령어 개수:', client.commands.size);
+});
+
 // 봇 토큰으로 로그인
+console.log('[INFO] 봇 로그인을 시도합니다...');
 client.login(process.env.DISCORD_TOKEN);
 
 console.log('CoC Collaborative War-Map Planner 봇이 준비되었습니다.'); 
