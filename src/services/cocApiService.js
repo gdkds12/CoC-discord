@@ -60,9 +60,11 @@ async function getCurrentWar(clanTagToFetch) {
             // 날짜 형식 검증 및 수정
             if (warData.startTime) {
                 try {
-                    const startDate = new Date(warData.startTime);
+                    // YYYYMMDDTHHMMSS.000Z 형식을 YYYY-MM-DDTHH:MM:SS.000Z 형식으로 변환
+                    const isoStartTime = warData.startTime.replace(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})\.\d{3}Z/, '$1-$2-$3T$4:$5:$6.000Z');
+                    const startDate = new Date(isoStartTime);
                     if (isNaN(startDate.getTime())) {
-                        console.error(`${logPrefix} 잘못된 시작 시간 형식:`, warData.startTime);
+                        console.error(`${logPrefix} 잘못된 시작 시간 형식 (변환 후에도):`, warData.startTime, `변환 시도: ${isoStartTime}`);
                         warData.startTime = new Date().toISOString(); // 현재 시간으로 대체
                     } else {
                         warData.startTime = startDate.toISOString();
@@ -75,9 +77,11 @@ async function getCurrentWar(clanTagToFetch) {
 
             if (warData.endTime) {
                 try {
-                    const endDate = new Date(warData.endTime);
+                    // YYYYMMDDTHHMMSS.000Z 형식을 YYYY-MM-DDTHH:MM:SS.000Z 형식으로 변환
+                    const isoEndTime = warData.endTime.replace(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})\.\d{3}Z/, '$1-$2-$3T$4:$5:$6.000Z');
+                    const endDate = new Date(isoEndTime);
                     if (isNaN(endDate.getTime())) {
-                        console.error(`${logPrefix} 잘못된 종료 시간 형식:`, warData.endTime);
+                        console.error(`${logPrefix} 잘못된 종료 시간 형식 (변환 후에도):`, warData.endTime, `변환 시도: ${isoEndTime}`);
                         warData.endTime = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24시간 후로 설정
                     } else {
                         warData.endTime = endDate.toISOString();

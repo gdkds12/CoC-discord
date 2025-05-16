@@ -62,8 +62,12 @@ const initializeDatabase = () => {
           CREATE TABLE IF NOT EXISTS wars (
             warId TEXT PRIMARY KEY,
             clanTag TEXT,
+            opponentClanTag TEXT, 
+            opponentClanName TEXT, 
+            opponentClanLevel INTEGER,
             state TEXT DEFAULT 'preparation', 
             teamSize INTEGER,
+            attacksPerMember INTEGER DEFAULT 2,
             channelId TEXT,
             messageIds TEXT, 
             createdBy TEXT,
@@ -133,14 +137,18 @@ const getDB = () => {
 const saveWar = async (warData) => {
   return new Promise((resolve, reject) => {
     const query = `
-      INSERT INTO wars (warId, clanTag, state, teamSize, channelId, messageIds, createdBy, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO wars (warId, clanTag, opponentClanTag, opponentClanName, opponentClanLevel, state, teamSize, attacksPerMember, channelId, messageIds, createdBy, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     const params = [
       warData.warId,
       warData.clanTag,
+      warData.opponentClanTag,
+      warData.opponentClanName,
+      warData.opponentClanLevel,
       warData.state || 'preparation',
       warData.teamSize,
+      warData.attacksPerMember || 2,
       warData.channelId,
       JSON.stringify(warData.messageIds || {}), // 객체/배열은 JSON 문자열로 저장
       warData.createdBy,
@@ -458,6 +466,24 @@ const updateMemberProfile = async (warId, userId, updates) => {
   });
 };
 
+// 특정 전쟁의 모든 멤버 정보 조회 (공격권, 예약 타겟 등 포함)
+const getMembersByWarId = async (warId) => {
+  return new Promise((resolve, reject) => {
+    const query = `SELECT * FROM members WHERE warId = ?`;
+    getDB().all(query, [warId], (err, rows) => {
+      if (err) {
+        console.error('[DB Error] Error fetching members by warId:', err.message);
+        return reject(err);
+      }
+      rows.forEach(row => {
+        if (row.reservedTargets) row.reservedTargets = JSON.parse(row.reservedTargets);
+        if (row.confidence) row.confidence = JSON.parse(row.confidence);
+      });
+      resolve(rows);
+    });
+  });
+};
+
 // 모든 활성 전쟁 정보 조회
 const getAllActiveWars = async () => {
   return new Promise((resolve, reject) => {
@@ -499,4 +525,5 @@ module.exports = {
   updateTargetConfidence,
   getOrCreateMember,
   updateMemberProfile,
+  getMembersByWarId,
 }; 
