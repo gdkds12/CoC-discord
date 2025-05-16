@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { db, getWarSession, firebaseInitialized } = require('../services/firestoreHandler.js');
 const { getCurrentWar } = require('../services/cocApiService.js');
 require('dotenv').config();
@@ -57,14 +57,21 @@ module.exports = {
         .setDMPermission(true),
 
     async execute(interaction) {
-        const { user, guild, channel } = interaction;
+        const commandName = interaction.commandName;
+        const userId = interaction.user.id;
+        const username = interaction.user.username;
+        const guildId = interaction.guildId;
+        const channelId = interaction.channelId;
         const specifiedWarId = interaction.options.getString('warid');
-        const execLogPrefix = `${logPrefix}[${user.tag}(${user.id})][Guild:${guild?.id || 'DM'}][Channel:${channel?.id || 'DM'}][SpecifiedWarId:${specifiedWarId || 'None'}]`;
+
+        const execLogPrefix = `[COMMAND:${commandName}][${username}_(${userId})][Guild:${guildId || 'DM'}][Channel:${channelId || 'DM'}][SpecifiedWarId:${specifiedWarId || 'None'}]`;
+
         console.info(`${execLogPrefix} Command execution started.`);
 
         if (!firebaseInitialized) {
             console.error(`${execLogPrefix} Firestore is not initialized. Replying and exiting.`);
-            return interaction.reply({ content: '봇의 데이터베이스 연결에 문제가 발생했습니다. 관리자에게 문의하세요.', ephemeral: true });
+            await interaction.reply({ content: '데이터베이스 연결에 실패하여 명령을 실행할 수 없습니다. 잠시 후 다시 시도해주세요. 😔', flags: [MessageFlags.Ephemeral] });
+            return;
         }
 
         console.debug(`${execLogPrefix} Deferring reply.`);
@@ -80,7 +87,7 @@ module.exports = {
                 const currentChannelId = interaction.channelId;
                 if (!currentChannelId && interaction.guildId) {
                     console.warn(`${execLogPrefix} Cannot get current channelId in a guild. Replying and exiting.`);
-                    return interaction.editReply({ content: '채널 정보를 가져올 수 없습니다. `warid`를 명시해주세요.', ephemeral: true });
+                    return interaction.editReply({ content: '채널 정보를 가져올 수 없습니다. `warid`를 명시해주세요.', flags: [MessageFlags.Ephemeral] });
                 }
                 console.debug(`${execLogPrefix} No warId specified. Attempting to find active war for current channel: ${currentChannelId}`);
                 const warsQuery = db.collection('wars').where('channelId', '==', currentChannelId).where('ended', '==', false).limit(1);
@@ -104,7 +111,7 @@ module.exports = {
                         }
                     } else {
                         console.info(`${execLogPrefix} No active war in current channel (Firestore) and no current war in CoC API (or clan not in war). Replying and exiting.`);
-                        return interaction.editReply({ content: '현재 채널 또는 API에서 진행 중인 전쟁 정보를 찾을 수 없습니다. 😢 `warid`를 지정하거나 전쟁 채널에서 사용해주세요.', ephemeral: true });
+                        return interaction.editReply({ content: '현재 채널 또는 API에서 진행 중인 전쟁 정보를 찾을 수 없습니다. 😢 `warid`를 지정하거나 전쟁 채널에서 사용해주세요.', flags: [MessageFlags.Ephemeral] });
                     }
                 } else {
                     warIdToQuery = warsSnapshot.docs[0].id;
@@ -116,7 +123,7 @@ module.exports = {
                 warData = await getWarSession(warIdToQuery);
                 if (!warData) {
                     console.warn(`${execLogPrefix} Specified warId ${warIdToQuery} not found in Firestore. Replying and exiting.`);
-                    return interaction.editReply({ content: `\`${warIdToQuery}\` ID에 해당하는 전쟁 정보를 Firestore에서 찾을 수 없습니다. 🔍 API로 현재 전쟁을 확인하려면 warid 없이 사용해보세요.`, ephemeral: true });
+                    return interaction.editReply({ content: `\`${warIdToQuery}\` ID에 해당하는 전쟁 정보를 Firestore에서 찾을 수 없습니다. 🔍 API로 현재 전쟁을 확인하려면 warid 없이 사용해보세요.`, flags: [MessageFlags.Ephemeral] });
                 }
                  console.info(`${execLogPrefix} War ${warIdToQuery} found in Firestore.`);
             }
@@ -186,7 +193,7 @@ module.exports = {
                 );
             } else {
                 console.warn(`${execLogPrefix} No war data found from Firestore or CoC API. Replying and exiting.`);
-                return interaction.editReply({ content: '전쟁 정보를 찾을 수 없습니다. 😥', ephemeral: true });
+                return interaction.editReply({ content: '전쟁 정보를 찾을 수 없습니다. 😥', flags: [MessageFlags.Ephemeral] });
             }
             
             if (cocWarData && cocWarData.state !== 'notInWar') {
@@ -310,15 +317,17 @@ module.exports = {
 
             try {
                 if (interaction.replied || interaction.deferred) {
-                    await interaction.editReply({ content: errorMessage, ephemeral: true });
+                    await interaction.editReply({ content: errorMessage, flags: [MessageFlags.Ephemeral] });
                 } else {
-                    await interaction.reply({ content: errorMessage, ephemeral: true });
+                    await interaction.reply({ content: errorMessage, flags: [MessageFlags.Ephemeral] });
                 }
                 console.info(`${execLogPrefix} Sent error message to user: ${errorMessage}`);
             } catch (replyError) {
                 console.error(`${execLogPrefix} Failed to send error reply to user:`, replyError);
             }
             console.info(`${execLogPrefix} Command execution finished with errors.`);
+        } finally {
+            console.info(`${execLogPrefix} Command execution finished${interaction.replied || interaction.deferred ? (errorOccurred ? ' with errors.' : '.') : ' without explicit reply/deferral.'}`);
         }
     },
 }; 
