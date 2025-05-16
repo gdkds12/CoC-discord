@@ -37,7 +37,7 @@ module.exports = {
 
         try {
             console.info(`${execLogPrefix} Fetching current war data from CoC API.`);
-            let currentWarData = await getCurrentWar();
+            let currentWarData = await getCurrentWar(process.env.CLAN_TAG);
 
             // API 호출 실패
             if (!currentWarData) {
