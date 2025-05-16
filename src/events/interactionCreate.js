@@ -49,22 +49,13 @@ module.exports = {
             
             console.info(`${buttonLogPrefix} Button interaction received.`);
             
-            // 인터랙션 응답 전에 중복 응답 방지를 위한 체크
-            if (interaction.replied || interaction.deferred) {
-                console.warn(`${buttonLogPrefix} Interaction already replied or deferred.`);
-                return;
-            }
-            
-            await interaction.deferReply({ ephemeral: true });
-            console.debug(`${buttonLogPrefix} Reply deferred.`);
-
             try {
                 console.debug(`${buttonLogPrefix} Processing action: ${action}`);
                 if (action === 'reserve') {
+                    await interaction.deferReply({ ephemeral: true }); // 예약 액션 시작 시 응답 지연
                     console.info(`${logPrefix} Reserve action started.`);
                     
                     try {
-                        // 전쟁 세션 확인
                         const warSession = await getWar(warId);
                         if (!warSession) {
                             return interaction.editReply({ 
@@ -73,7 +64,6 @@ module.exports = {
                             });
                         }
                         
-                        // 타겟 정보 확인
                         const targetInfo = await getTarget(warId, targetNumber);
                         if (!targetInfo) {
                             return interaction.editReply({ 
@@ -82,28 +72,49 @@ module.exports = {
                             });
                         }
                         
-                        // 멤버 프로필 조회 또는 생성
-                        const memberProfile = await getOrCreateMember(warId, userId);
+                        let memberProfile = await getOrCreateMember(warId, userId);
                         console.info(`${logPrefix} Fetched/created member profile: ${memberProfile ? 'Exists' : 'Created'} (attacksLeft: ${memberProfile?.attacksLeft})`);
 
-                        // 예약 가능 여부 확인
                         if (!memberProfile || memberProfile.attacksLeft <= 0) {
                             return interaction.editReply({ 
                                 content: '남은 공격 횟수가 없습니다. 😥', 
                                 flags: [MessageFlags.Ephemeral] 
                             });
                         }
-
-                        // 예약 처리
-                        const updatedTarget = await updateTargetReservation(warId, targetNumber, userId, true);
-                        if (!updatedTarget) {
-                            return interaction.editReply({ 
-                                content: '목표 예약에 실패했습니다. 😥', 
-                                flags: [MessageFlags.Ephemeral] 
-                            });
+                        
+                        // 예약자 목록 확인 및 중복 예약 방지
+                        let currentTargetReservations = Array.isArray(targetInfo.reservedBy) ? targetInfo.reservedBy : (targetInfo.reservedBy ? JSON.parse(targetInfo.reservedBy) : []);
+                        if (currentTargetReservations.includes(userId)) {
+                             return interaction.editReply({ content: '이미 이 목표를 예약했습니다. 🤔', flags: [MessageFlags.Ephemeral] });
+                        }
+                        if (currentTargetReservations.length >= 2) {
+                            return interaction.editReply({ content: '이 목표는 이미 다른 유저들이 모두 예약했습니다. 🧐', flags: [MessageFlags.Ephemeral] });
                         }
 
-                        // 임베드 업데이트
+                        const updatedTarget = await updateTargetReservation(warId, targetNumber, userId, true);
+                        if (!updatedTarget || !updatedTarget.updated) {
+                             return interaction.editReply({ content: '목표 예약에 실패했습니다. 다시 시도해주세요. 🤔', flags: [MessageFlags.Ephemeral] });
+                        }
+
+                        // 멤버 프로필 업데이트 (공격권 감소 및 예약 목록 추가)
+                        let currentMemberReservedTargets = Array.isArray(memberProfile.reservedTargets)
+                            ? memberProfile.reservedTargets
+                            : (typeof memberProfile.reservedTargets === 'string' && memberProfile.reservedTargets
+                                ? JSON.parse(memberProfile.reservedTargets)
+                                : []);
+                        
+                        if (!currentMemberReservedTargets.includes(targetNumber)) {
+                            currentMemberReservedTargets.push(targetNumber);
+                        }
+                        const newAttacksLeft = Math.max(0, (memberProfile.attacksLeft || 0) - 1);
+                        
+                        await updateMemberProfile(warId, userId, {
+                            reservedTargets: currentMemberReservedTargets,
+                            attacksLeft: newAttacksLeft
+                        });
+                        console.info(`${logPrefix} Member profile updated after reservation. Attacks left: ${newAttacksLeft}, Reserved: ${JSON.stringify(currentMemberReservedTargets)}`);
+
+
                         try {
                             const warChannel = interaction.guild.channels.cache.get(warSession.channelId);
                             if (warChannel && warSession.messageIds[targetNumber]) {
@@ -116,84 +127,69 @@ module.exports = {
                             }
                         } catch (embedError) {
                             console.error(`${logPrefix} Error updating embed:`, embedError);
-                            // 임베드 업데이트 실패해도 예약은 완료된 상태이므로 진행
                         }
 
                         await interaction.editReply({ 
-                            content: `목표 #${targetNumber}를 예약했습니다! 🎯`, 
+                            content: `목표 #${targetNumber}를 예약했습니다! 🎯 남은 공격권: ${newAttacksLeft}회`, 
                             flags: [MessageFlags.Ephemeral] 
                         });
                     } catch (error) {
-                        console.error(`${logPrefix} Button interaction error:`, error);
-                        await interaction.editReply({ 
-                            content: '예약 처리 중 오류가 발생했습니다. 😥 ' + (error.message || ''),
-                            flags: [MessageFlags.Ephemeral] 
-                        });
+                        console.error(`${logPrefix} Button interaction error (reserve):`, error);
+                        if (!interaction.replied) { // deferReply 후 editReply 전에 에러 발생 시
+                           try { await interaction.editReply({ content: '예약 처리 중 오류가 발생했습니다. 😥', flags: [MessageFlags.Ephemeral] }); } catch (e) {}
+                        }
                     }
                 } else if (action === 'cancel') {
+                    await interaction.deferReply({ ephemeral: true }); // 예약 취소 액션 시작 시 응답 지연
                     console.debug(`${buttonLogPrefix} Cancel action started.`);
                     try {
-                        // 전쟁 세션 확인
                         const warSession = await getWar(warId);
                         if (!warSession) {
                             return interaction.editReply({ 
-                                content: '전쟁 세션을 찾을 수 없습니다. 전쟁이 종료되었거나 데이터베이스 오류가 발생했습니다. 😥', 
-                                flags: [MessageFlags.Ephemeral] 
+                                content: '전쟁 세션을 찾을 수 없습니다. 😥', flags: [MessageFlags.Ephemeral] 
                             });
                         }
                         
-                        // 타겟 정보 확인
                         const targetInfo = await getTarget(warId, targetNumber);
                         if (!targetInfo) {
                             return interaction.editReply({ 
-                                content: `목표 #${targetNumber}를 찾을 수 없습니다. 데이터베이스 오류가 발생했습니다. 😥`, 
-                                flags: [MessageFlags.Ephemeral] 
+                                content: `목표 #${targetNumber}를 찾을 수 없습니다. 😥`, flags: [MessageFlags.Ephemeral] 
                             });
                         }
                         
-                        // 멤버 프로필 조회
                         const memberProfile = await getOrCreateMember(warId, userId);
-                        console.debug(`${buttonLogPrefix} Fetched/created member profile for cancel:`, memberProfile ? `Exists (reservedTargets: ${memberProfile.reservedTargets})` : 'Not found/created');
+                        console.debug(`${buttonLogPrefix} Fetched member profile for cancel: attacksLeft=${memberProfile.attacksLeft}, reservedTargets=${memberProfile.reservedTargets}`);
                         
-                        // 여러 타겟 예약 가능하도록 배열로 처리
-                        const currentReservedTargets = Array.isArray(memberProfile.reservedTargets)
+                        const currentMemberReservedTargets = Array.isArray(memberProfile.reservedTargets)
                             ? memberProfile.reservedTargets
                             : (typeof memberProfile.reservedTargets === 'string' && memberProfile.reservedTargets
                                 ? JSON.parse(memberProfile.reservedTargets)
                                 : []);
                         
-                        if (!currentReservedTargets.includes(targetNumber)) {
-                            console.info(`${buttonLogPrefix} User has not reserved this target.`);
+                        if (!currentMemberReservedTargets.includes(targetNumber)) {
+                            console.info(`${buttonLogPrefix} User ${userId} has not reserved target ${targetNumber}. Current reservations: ${JSON.stringify(currentMemberReservedTargets)}`);
                             return interaction.editReply({ 
-                                content: '이 목표를 예약하지 않았습니다. 🤷', 
-                                flags: [MessageFlags.Ephemeral]
+                                content: '이 목표를 본인이 예약하지 않았습니다. 🤷', flags: [MessageFlags.Ephemeral]
                             });
                         }
 
-                        // 예약 취소 처리
                         const updatedTarget = await updateTargetReservation(warId, targetNumber, userId, false);
-                        if (!updatedTarget) {
-                            return interaction.editReply({ 
-                                content: '예약 해제에 실패했습니다. 😥', 
-                                flags: [MessageFlags.Ephemeral] 
-                            });
+                        if (!updatedTarget || !updatedTarget.updated) {
+                             return interaction.editReply({ content: '예약 해제에 실패했습니다. 이미 다른 유저가 없거나, DB 오류일 수 있습니다. 🤔', flags: [MessageFlags.Ephemeral] });
                         }
 
-                        // 멤버 프로필 업데이트 (공격권 반환 및 예약 목록에서 제거)
-                        const newReservedTargets = currentReservedTargets.filter(tNum => tNum !== targetNumber);
-                        const maxAttacks = parseInt(process.env.MAX_ATTACKS_PER_MEMBER) || 2;
-                        const newAttacksLeft = Math.min(maxAttacks, (memberProfile.attacksLeft || 0) + 1);
+                        const newReservedTargets = currentMemberReservedTargets.filter(tNum => tNum !== targetNumber);
+                        const warDetails = await getWar(warId); // To get attacksPerMember if needed, or use env
+                        const attacksPerMember = warDetails?.attacksPerMember || parseInt(process.env.MAX_ATTACKS_PER_MEMBER) || 2;
+                        const newAttacksLeft = Math.min(attacksPerMember, (memberProfile.attacksLeft || 0) + 1);
                         
-                        // 자신감 정보도 제거
                         let currentMemberConfidence = {};
                         if (memberProfile.confidence) {
                             currentMemberConfidence = typeof memberProfile.confidence === 'string'
                                 ? JSON.parse(memberProfile.confidence)
                                 : memberProfile.confidence;
-                            
-                            if (currentMemberConfidence[targetNumber]) {
-                                delete currentMemberConfidence[targetNumber];
-                                console.debug(`${buttonLogPrefix} Confidence for target ${targetNumber} removed from member profile.`);
+                            if (currentMemberConfidence[targetNumber.toString()]) { // Ensure key is string if stored as string
+                                delete currentMemberConfidence[targetNumber.toString()];
                             }
                         }
                         
@@ -202,8 +198,8 @@ module.exports = {
                             attacksLeft: newAttacksLeft, 
                             confidence: currentMemberConfidence 
                         });
+                        console.info(`${logPrefix} Member profile updated after cancellation. Attacks left: ${newAttacksLeft}, Reserved: ${JSON.stringify(newReservedTargets)}`);
                         
-                        // 임베드 업데이트
                         try {
                             const warChannel = interaction.guild.channels.cache.get(warSession.channelId);
                             if (warChannel && warSession.messageIds[targetNumber]) {
@@ -215,8 +211,7 @@ module.exports = {
                                 }
                             }
                         } catch (embedError) {
-                            console.error(`${logPrefix} Error updating embed:`, embedError);
-                            // 임베드 업데이트 실패해도 예약 취소는 완료된 상태이므로 진행
+                            console.error(`${logPrefix} Error updating embed (cancel):`, embedError);
                         }
 
                         await interaction.editReply({ 
@@ -225,35 +220,28 @@ module.exports = {
                         });
                         console.info(`${buttonLogPrefix} Cancel action completed.`);
                     } catch (error) {
-                        console.error(`${buttonLogPrefix} Button interaction error:`, error);
-                        await interaction.editReply({ 
-                            content: '예약 취소 중 오류가 발생했습니다. 😥 ' + (error.message || ''),
-                            flags: [MessageFlags.Ephemeral] 
-                        });
+                        console.error(`${buttonLogPrefix} Button interaction error (cancel):`, error);
+                         if (!interaction.replied) {
+                           try { await interaction.editReply({ content: '예약 취소 중 오류가 발생했습니다. 😥', flags: [MessageFlags.Ephemeral] }); } catch (e) {}
+                        }
                     }
                 } else if (action === 'destruction') {
+                    // For modal, do not defer here. showModal is the reply.
                     console.debug(`${buttonLogPrefix} Destruction action started (showing modal).`);
                     
-                    // 전쟁 세션 확인
-                    const warSession = await getWar(warId);
+                    const warSession = await getWar(warId); // Fetch war session for validation
                     if (!warSession) {
-                        return interaction.editReply({ 
-                            content: '전쟁 세션을 찾을 수 없습니다. 전쟁이 종료되었거나 데이터베이스 오류가 발생했습니다. 😥', 
-                            flags: [MessageFlags.Ephemeral] 
-                        });
+                        // Need to reply if war session not found, cannot show modal
+                        await interaction.reply({ content: '전쟁 세션을 찾을 수 없어 파괴율을 입력할 수 없습니다. 😥', ephemeral: true });
+                        return;
                     }
-                    
-                    // 타겟 정보 확인
                     const targetInfo = await getTarget(warId, targetNumber);
-                    if (!targetInfo) {
-                        return interaction.editReply({ 
-                            content: `목표 #${targetNumber}를 찾을 수 없습니다. 데이터베이스 오류가 발생했습니다. 😥`, 
-                            flags: [MessageFlags.Ephemeral] 
-                        });
+                     if (!targetInfo) {
+                        await interaction.reply({ content: `목표 #${targetNumber}를 찾을 수 없어 파괴율을 입력할 수 없습니다. 😥`, ephemeral: true });
+                        return;
                     }
-                    
+
                     try {
-                        // 모달 생성 및 표시
                         const modal = new ModalBuilder()
                             .setCustomId(`destructionModal_${targetNumber}_${warId}`)
                             .setTitle(`목표 #${targetNumber} 예상 파괴율`);
@@ -268,36 +256,33 @@ module.exports = {
                         const firstActionRow = new ActionRowBuilder().addComponents(destructionInput);
                         modal.addComponents(firstActionRow);
                         
-                        // 이미 응답된 인터랙션인지 확인
-                        if (interaction.replied || interaction.deferred) {
-                            // 응답이 이미 된 경우 followUp으로 메시지 보내기
-                            await interaction.editReply({
-                                content: '이미 다른 동작이 진행 중입니다. 잠시 후 다시 시도해주세요.',
-                                flags: [MessageFlags.Ephemeral]
-                            });
-                        } else {
-                            // 모달 표시
-                            await interaction.showModal(modal);
-                            console.info(`${buttonLogPrefix} Destruction modal shown.`);
-                        }
+                        // showModal is the first reply for this interaction path
+                        await interaction.showModal(modal);
+                        console.info(`${buttonLogPrefix} Destruction modal shown.`);
+                        
                     } catch (error) {
                         console.error(`${buttonLogPrefix} Error showing modal:`, error);
-                        
-                        // 이미 응답된 인터랙션인지 확인
-                        if (interaction.replied || interaction.deferred) {
-                            await interaction.editReply({
-                                content: '동작 수행 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.',
-                                flags: [MessageFlags.Ephemeral]
-                            });
-                        } else {
-                            await interaction.reply({
-                                content: '동작 수행 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.',
-                                flags: [MessageFlags.Ephemeral],
-                                ephemeral: true
-                            });
+                        // If showModal fails, try to send an ephemeral message
+                        if (!interaction.replied && !interaction.deferred) {
+                            try {
+                                await interaction.reply({
+                                    content: '파괴율 입력 창을 여는 중 오류가 발생했습니다. 😥',
+                                    ephemeral: true
+                                });
+                            } catch (replyError) {
+                                console.error(`${buttonLogPrefix} Failed to send error reply for modal show failure:`, replyError);
+                            }
+                        } else if (interaction.deferred && !interaction.replied) { // Should not happen if defer is removed for destruction
+                             try {
+                                await interaction.editReply({
+                                    content: '파괴율 입력 창을 여는 중 오류가 발생했습니다. 😥',
+                                });
+                            } catch (replyError) {
+                                 console.error(`${buttonLogPrefix} Failed to send error editReply for modal show failure:`, replyError);
+                            }
                         }
                     }
-                    return; 
+                    // No return here, interaction continues with modal submission
                 }
             } catch (error) {
                 console.error(`${buttonLogPrefix} Button interaction error:`, error);
