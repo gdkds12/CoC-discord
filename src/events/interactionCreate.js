@@ -344,7 +344,21 @@ module.exports = {
 
                     console.debug(`${modalLogPrefix} Fetching/updating member profile for confidence update.`);
                     let memberProfile = await getOrCreateMember(warId, userId);
-                    let memberConfidenceMap = JSON.parse(memberProfile.confidence || '{}');
+                    
+                    // memberProfile.confidence가 문자열인 경우에만 JSON.parse 실행
+                    let memberConfidenceMap;
+                    if (typeof memberProfile.confidence === 'string') {
+                        try {
+                            memberConfidenceMap = JSON.parse(memberProfile.confidence || '{}');
+                        } catch (e) {
+                            console.warn(`${modalLogPrefix} Failed to parse member confidence string: ${memberProfile.confidence}. Initializing to empty object. Error: ${e.message}`);
+                            memberConfidenceMap = {};
+                        }
+                    } else {
+                        // 이미 객체이거나 null/undefined인 경우, 기본값으로 빈 객체 사용
+                        memberConfidenceMap = memberProfile.confidence || {};
+                    }
+
                     memberConfidenceMap[targetNumberStr] = percentage; // targetNumber를 문자열 키로 사용 (일관성 유지)
                     await updateMemberProfile(warId, userId, { confidence: memberConfidenceMap });
                     console.info(`${modalLogPrefix} Member profile confidence updated for target ${targetNumberStr} to ${percentage}%.`);
