@@ -257,30 +257,42 @@ module.exports = {
                 opponentClanName: currentWarData.opponent?.name,
                 opponentClanLevel: currentWarData.opponent?.clanLevel,
                 teamSize: teamSize,
-                attacksPerMember: currentWarData.attacksPerMember || parseInt(process.env.MAX_ATTACKS_PER_MEMBER) || 2, // API에 있으면 쓰고 없으면 환경변수, 그것도 없으면 2
-                preparationStartTime: currentWarData.preparationStartTime !== '0001-01-01T00:00:00.000Z' ? new Date(currentWarData.preparationStartTime).toISOString() : null,
-                startTime: currentWarData.startTime !== '0001-01-01T00:00:00.000Z' ? new Date(currentWarData.startTime).toISOString() : null,
-                endTime: currentWarData.endTime !== '0001-01-01T00:00:00.000Z' ? new Date(currentWarData.endTime).toISOString() : null,
+                attacksPerMember: currentWarData.attacksPerMember || parseInt(process.env.MAX_ATTACKS_PER_MEMBER) || 2,
                 state: currentWarData.state,
                 channelId: warChannel.id,
-                messageIds: messageIds, // messageIds는 wars 테이블에 JSON 문자열로 저장됨
+                messageIds: messageIds,
                 createdBy: user.id,
-                createdAt: new Date().toISOString(), // Firestore의 serverTimestamp() 대신 ISO 문자열
-                // ended, endedAt, endedBy는 endwar 명령어 또는 상태 변경시 업데이트
+                createdAt: new Date().toISOString(),
             };
-            // console.debug(`${execLogPrefix} War session data prepared:`, warSessionData); // 전체 객체 로깅은 민감할 수 있으므로 주요 정보만 로깅하도록 변경됨
-            console.debug(`${execLogPrefix} War session data prepared:`, { warId, clanTag, teamSize, channelId: warSessionData.channelId, state: warSessionData.state, messageIdsCount: Object.keys(messageIds).length });
+            
+            // 디버그 로깅에서 민감한 정보를 제외하고 필요한 정보만 출력
+            console.debug(`${execLogPrefix} War session data prepared:`, { 
+                warId, 
+                clanTag, 
+                teamSize, 
+                channelId: warSessionData.channelId, 
+                state: warSessionData.state, 
+                messageIdsCount: Object.keys(messageIds).length 
+            });
 
-            await saveWar(warSessionData); // SQLite 함수로 변경
-            console.info(`${execLogPrefix} War session ${warId} data saved to DB for channel <#${warChannel.name}>.`);
-
-            // targetsToSave 배열에 있는 데이터를 targets 테이블에 저장
-            if (targetsToSave.length > 0) {
-                console.info(`${execLogPrefix} Saving ${targetsToSave.length} initial targets to DB for warId: ${warId}.`);
-                await saveInitialTargets(warId, targetsToSave);
-                console.info(`${execLogPrefix} Initial targets saved to DB.`);
-            } else {
-                console.warn(`${execLogPrefix} No targets were prepared to be saved for warId: ${warId}. This might indicate an issue with message sending.`);
+            try {
+                await saveWar(warSessionData);
+                console.info(`${execLogPrefix} War session ${warId} data saved to DB for channel ${warChannel.name}.`);
+                
+                // targetsToSave 배열에 있는 데이터를 targets 테이블에 저장
+                if (targetsToSave.length > 0) {
+                    console.info(`${execLogPrefix} Saving ${targetsToSave.length} initial targets to DB for warId: ${warId}.`);
+                    await saveInitialTargets(warId, targetsToSave);
+                    console.info(`${execLogPrefix} Initial targets saved to DB.`);
+                } else {
+                    console.warn(`${execLogPrefix} No targets were prepared to be saved for warId: ${warId}. This might indicate an issue with message sending.`);
+                }
+            } catch (dbError) {
+                console.error(`${execLogPrefix} Error saving war data to database:`, dbError);
+                return interaction.editReply({ 
+                    content: '전쟁 세션 데이터를 데이터베이스에 저장하는 중 오류가 발생했습니다. 다시 시도해주세요.',
+                    ephemeral: true 
+                });
             }
 
             console.info(`${execLogPrefix} Sending opponent clan info embed to <#${warChannel.id}>.`);
