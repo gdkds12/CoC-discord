@@ -313,25 +313,31 @@ const updateTargetReservation = async (warId, targetNumber, userId, addReservati
 };
 
 // 목표 파괴율 및 결과 업데이트
-const updateTargetResult = async (warId, targetNumber, stars, destruction, attackerId) => {
+const updateTargetResult = async (warId, targetNumber, stars, destruction, attackerCocTag = null, attackerDiscordId = null) => {
   return new Promise(async (resolve, reject) => {
     const target = await getTarget(warId, targetNumber);
     if (!target) return reject(new Error('Target not found'));
 
-    const result = { stars, destruction, attacker: attackerId };
+    const currentResult = target.result || {}; // 기존 결과 또는 빈 객체
+    const newResult = {
+        stars: stars !== undefined ? stars : currentResult.stars,
+        destruction: destruction !== undefined ? destruction : currentResult.destruction,
+        attackerCocTag: attackerCocTag !== undefined ? attackerCocTag : currentResult.attackerCocTag,
+        attackerDiscordId: attackerDiscordId !== undefined ? attackerDiscordId : currentResult.attackerDiscordId,
+    };
     
-    // 이미 3별인 경우 업데이트하지 않음 (선택적 로직)
-    // if (target.result && target.result.stars === 3) {
-    //   return resolve({ ...target, updated: false, message: 'Target already 3-starred.' });
+    // 이전 결과와 비교하여 변경 사항이 있을 때만 업데이트 (선택적)
+    // if (JSON.stringify(currentResult) === JSON.stringify(newResult)) {
+    //   return resolve({ ...target, result: currentResult, updated: false, message: 'No changes to result.' });
     // }
 
     const query = `UPDATE targets SET result = ? WHERE warId = ? AND targetNumber = ?`;
-    getDB().run(query, [JSON.stringify(result), warId, targetNumber], function(err) {
+    getDB().run(query, [JSON.stringify(newResult), warId, targetNumber], function(err) {
       if (err) {
         console.error('[DB Error] Error updating target result:', err.message);
         return reject(err);
       }
-      resolve({ ...target, result, updated: this.changes > 0 });
+      resolve({ ...target, result: newResult, updated: this.changes > 0 });
     });
   });
 };

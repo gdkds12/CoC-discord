@@ -66,6 +66,13 @@ function createTargetEmbed(targetData, warId) {
     const { targetNumber, opponentName, opponentTownhallLevel, reservedBy = [], confidence = {}, result } = targetData;
     const title = `🎯 ${opponentName || '알 수 없는 상대'} ${opponentTownhallLevel ? '(TH' + opponentTownhallLevel + ')' : ''} (#${targetNumber})`;
 
+    let attackerDisplay = '';
+    if (result && result.attackerDiscordId) {
+        attackerDisplay = `(<@${result.attackerDiscordId}>)`;
+    } else if (result && result.attackerCocTag) {
+        attackerDisplay = `(Tag: ${result.attackerCocTag})`;
+    }
+
     const fields = [
         { name: '👤 예약자 1', value: reservedBy && reservedBy[0] ? `<@${reservedBy[0]}>` : '`미지정`', inline: true },
         { name: '👤 예약자 2', value: reservedBy && reservedBy[1] ? `<@${reservedBy[1]}>` : '`미지정`', inline: true },
@@ -83,7 +90,7 @@ function createTargetEmbed(targetData, warId) {
         { name: '\u200B', value: '\u200B' },
         { 
             name: '⭐ 실제 결과', 
-            value: result && result.stars !== undefined ? `별: ${result.stars}개, 파괴율: ${result.destruction}% ${result.attacker ? `(<@${result.attacker}>)` : ''}` : '`미입력`', 
+            value: result && result.stars !== undefined ? `별: ${result.stars}개, 파괴율: ${result.destruction}% ${attackerDisplay.trim()}` : '`미입력`', 
             inline: false 
         },
     ];
