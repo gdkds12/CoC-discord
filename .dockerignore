@@ -1,0 +1,20 @@
+# Git 관련 파일/디렉토리 제외
+.git
+.gitignore
+
+# Node.js 의존성 디렉토리 제외 (이미지 내에서 설치하므로)
+node_modules
+
+# 운영 환경에 필요 없는 파일들
+.env
+.env.example
+*.log
+
+# Docker 관련 파일들 (빌드 컨텍스트에는 필요 없음)
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# 기타 로컬 설정 또는 임시 파일
+.vscode/
+README.md # README는 이미지에 포함할 필요가 없을 수 있습니다. 

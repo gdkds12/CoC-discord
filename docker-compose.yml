@@ -1,0 +1,33 @@
+version: '3.8' # Docker Compose 파일 형식 버전을 지정합니다.
+
+services:
+  coc-discord-bot: # 서비스 이름을 지정합니다. (원하는 대로 변경 가능)
+    build:
+      context: . # Dockerfile이 있는 디렉토리 (현재 디렉토리)
+      dockerfile: Dockerfile
+    container_name: coc-discord-bot-container # 실행될 컨테이너의 이름을 지정합니다.
+    restart: unless-stopped # 컨테이너가 비정상 종료되면 자동으로 재시작합니다 (stopped 상태 제외).
+    env_file:
+      - .env # 프로젝트 루트의 .env 파일에서 환경 변수를 로드합니다.
+    # 만약 Firebase 서비스 계정 키 파일을 사용하고, GOOGLE_APPLICATION_CREDENTIALS 환경변수에 파일 경로를 지정하는 경우,
+    # 해당 파일을 컨테이너 내부로 복사하거나 볼륨 마운트를 사용해야 합니다.
+    # 예시 (프로젝트 루트에 serviceAccountKey.json이 있고, .env에서 GOOGLE_APPLICATION_CREDENTIALS=./serviceAccountKey.json 으로 설정한 경우):
+    # volumes:
+    #   - ./serviceAccountKey.json:/usr/src/app/serviceAccountKey.json
+    # 이 경우 Dockerfile에서 이 파일을 직접 COPY하는 것보다 볼륨 마운트가 더 유연할 수 있습니다.
+    # 현재는 Firebase 설정을 .env에 직접 넣고 있으므로 이 부분은 주석 처리합니다.
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Docker 네트워크 설정 (선택적)
+# networks:
+#   bot-network:
+#     driver: bridge
+
+# Docker 볼륨 설정 (선택적, 예를 들어 데이터베이스 데이터를 영구 저장할 때 사용)
+# volumes:
+#   firebase-data: # 예시 
