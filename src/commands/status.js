@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
-const { getWar, getTargetsByWarId, updateTargetResult, getTarget } = require('../utils/databaseHandler');
+const { getWarByChannelId, getTargetsByWarId, updateTargetResult, getTarget } = require('../utils/databaseHandler');
 const { getCurrentWar } = require('../services/cocApiService.js');
 require('dotenv').config();
 
@@ -21,7 +21,7 @@ module.exports = {
 
             const currentChannelId = channel.id;
             console.info(`${execLogPrefix} Looking for war session in channel ${currentChannelId}`);
-            const warData = await getWar(currentChannelId);
+            const warData = await getWarByChannelId(currentChannelId);
             if (!warData) {
                 console.warn(`${execLogPrefix} No war session found for channel ${currentChannelId}`);
                 return interaction.editReply({ 

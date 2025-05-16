@@ -173,6 +173,23 @@ const getWar = async (warId) => {
   });
 };
 
+// 전쟁 정보 조회 (channelId 기준)
+const getWarByChannelId = async (channelId) => {
+  return new Promise((resolve, reject) => {
+    const query = `SELECT * FROM wars WHERE channelId = ? AND state != 'ended' ORDER BY createdAt DESC LIMIT 1`;
+    getDB().get(query, [channelId], (err, row) => {
+      if (err) {
+        console.error('[DB Error] Error fetching war by channelId:', err.message);
+        return reject(err);
+      }
+      if (row && row.messageIds) {
+        row.messageIds = JSON.parse(row.messageIds);
+      }
+      resolve(row); // 해당하는 전쟁이 없으면 null 반환
+    });
+  });
+};
+
 // 전쟁 상태 업데이트
 const updateWarState = async (warId, newState) => {
   return new Promise((resolve, reject) => {
@@ -441,12 +458,37 @@ const updateMemberProfile = async (warId, userId, updates) => {
   });
 };
 
+// 모든 활성 전쟁 정보 조회
+const getAllActiveWars = async () => {
+  return new Promise((resolve, reject) => {
+    const query = `SELECT * FROM wars WHERE state != 'ended'`;
+    getDB().all(query, [], (err, rows) => {
+      if (err) {
+        console.error('[DB Error] Error fetching all active wars:', err.message);
+        return reject(err);
+      }
+      rows.forEach(row => {
+        if (row.messageIds) {
+          try {
+            row.messageIds = JSON.parse(row.messageIds);
+          } catch (parseError) {
+            console.error(`[DB Error] Error parsing messageIds for war ${row.warId}:`, parseError);
+            row.messageIds = {}; // 파싱 실패 시 기본값
+          }
+        }
+      });
+      resolve(rows);
+    });
+  });
+};
 
 module.exports = {
   initializeDatabase,
   getDB,
   saveWar,
   getWar,
+  getWarByChannelId,
+  getAllActiveWars,
   updateWarState,
   endWar,
   saveInitialTargets,

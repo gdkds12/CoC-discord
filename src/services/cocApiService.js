@@ -26,16 +26,25 @@ const headers = {
 
 /**
  * 클랜의 현재 진행 중인 전쟁 정보를 가져옵니다.
+ * @param {string} clanTagToFetch - 조회할 클랜의 태그 (예: #2J22V08JC)
  * @returns {Promise<object|null>} 현재 전쟁 정보 또는 null
  */
-async function getCurrentWar() {
-    console.log(`${logPrefix} getCurrentWar 함수 호출됨.`);
+async function getCurrentWar(clanTagToFetch) {
+    console.log(`${logPrefix} getCurrentWar 함수 호출됨 (요청된 클랜: ${clanTagToFetch}).`);
+    if (!clanTagToFetch) {
+        console.error(`${logPrefix} getCurrentWar 호출 시 클랜 태그가 제공되지 않았습니다.`);
+        return {
+            state: 'error',
+            reason: 'missing_clan_tag',
+            message: '클랜 태그가 필요합니다.'
+        };
+    }
     try {
         // 클랜 태그에서 # 제거
-        const clanTag = CLAN_TAG.replace('#', '');
-        const url = `${BASE_URL}/clans/%23${clanTag}/currentwar`;
+        const sanitizedClanTag = clanTagToFetch.replace('#', '');
+        const url = `${BASE_URL}/clans/%23${sanitizedClanTag}/currentwar`;
         
-        console.log(`${logPrefix} CoC API 요청 시작:`, url);
+        console.log(`${logPrefix} CoC API 요청 시작 (클랜: ${clanTagToFetch}):`, url);
         const response = await axios.get(url, { headers });
         console.log(`${logPrefix} CoC API 응답 수신:`, response.status, response.statusText);
         
