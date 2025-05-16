@@ -83,6 +83,9 @@ const initializeDatabase = () => {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             warId TEXT NOT NULL,
             targetNumber INTEGER NOT NULL,
+            opponentName TEXT,
+            opponentTag TEXT,
+            opponentTownhallLevel INTEGER,
             reservedBy TEXT, 
             confidence TEXT, 
             result TEXT, 
@@ -201,13 +204,13 @@ const endWar = async (warId) => {
 
 // 목표 정보 초기 저장 (여러 목표 한번에)
 const saveInitialTargets = async (warId, targets) => {
-  // targets는 [{ targetNumber: 1, messageId: '...' }, { targetNumber: 2, messageId: '...' }] 형태
+  // targets는 [{ targetNumber: 1, messageId: '...', opponentName: '...', opponentTag: '...', opponentTownhallLevel: 10 }, ...] 형태
   return new Promise((resolve, reject) => {
     const dbInstance = getDB();
     dbInstance.serialize(() => {
       const stmt = dbInstance.prepare(`
-        INSERT INTO targets (warId, targetNumber, messageId, reservedBy, confidence, result) 
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO targets (warId, targetNumber, messageId, opponentName, opponentTag, opponentTownhallLevel, reservedBy, confidence, result) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       
       let completed = 0;
@@ -215,15 +218,16 @@ const saveInitialTargets = async (warId, targets) => {
         stmt.run(
           warId, 
           target.targetNumber, 
-          target.messageId, // 각 타겟의 메시지 ID
-          JSON.stringify([]), // reservedBy: 빈 배열로 시작
-          JSON.stringify({}),  // confidence: 빈 객체로 시작
-          JSON.stringify({ stars: 0, destruction: 0, attacker: null }), // result: 기본값
+          target.messageId,
+          target.opponentName,
+          target.opponentTag,
+          target.opponentTownhallLevel,
+          JSON.stringify([]), 
+          JSON.stringify({}),
+          JSON.stringify({ stars: 0, destruction: 0, attacker: null }),
           (err) => {
             if (err) {
               console.error('[DB Error] Error saving initial target:', target.targetNumber, err.message);
-              // 하나의 타겟 저장 실패 시 전체 롤백은 복잡하므로, 여기서는 에러 로깅만 합니다.
-              // 필요시 트랜잭션 처리를 고려해야 합니다.
             }
             completed++;
             if (completed === targets.length) {
@@ -255,6 +259,7 @@ const getTargetsByWarId = async (warId) => {
         if (row.reservedBy) row.reservedBy = JSON.parse(row.reservedBy);
         if (row.confidence) row.confidence = JSON.parse(row.confidence);
         if (row.result) row.result = JSON.parse(row.result);
+        // opponentName, opponentTag, opponentTownhallLevel는 이미 적절한 타입
       });
       resolve(rows);
     });
@@ -274,6 +279,7 @@ const getTarget = async (warId, targetNumber) => {
         if (row.reservedBy) row.reservedBy = JSON.parse(row.reservedBy);
         if (row.confidence) row.confidence = JSON.parse(row.confidence);
         if (row.result) row.result = JSON.parse(row.result);
+        // opponentName, opponentTag, opponentTownhallLevel는 이미 적절한 타입
       }
       resolve(row);
     });

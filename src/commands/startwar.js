@@ -238,16 +238,34 @@ module.exports = {
 
             console.info(`${execLogPrefix} Sending initial target embeds and buttons to channel <#${warChannel.id}> for ${teamSize} targets.`);
             const messageIds = {};
-            const targetsToSave = []; // DB에 저장할 타겟 정보를 담을 배열
+            const targetsToSave = []; 
+
+            // 상대 클랜 멤버 정보 가져오기 (API 응답 구조에 따라 다를 수 있음)
+            const opponentMembers = currentWarData.opponent?.members || [];
 
             for (let i = 1; i <= teamSize; i++) {
-                console.debug(`${execLogPrefix} Creating embed and row for target #${i}, warId: ${warId}`);
-                const embed = createInitialTargetEmbed(i, warId);
+                // mapPosition은 1부터 시작하므로, i와 직접 매칭될 가능성이 높음
+                // API 응답에서 mapPosition이 0부터 시작하거나, 정렬이 다르다면 추가 로직 필요
+                const opponentMember = opponentMembers.find(member => member.mapPosition === i);
+
+                const initialTargetData = {
+                    targetNumber: i,
+                    opponentName: opponentMember?.name || `상대 ${i}`, // 이름이 없으면 기본값
+                    opponentTag: opponentMember?.tag || null,
+                    opponentTownhallLevel: opponentMember?.townhallLevel || null,
+                    // result, reservedBy, confidence 등은 DB 저장 시 기본값으로 설정됨
+                };
+
+                console.debug(`${execLogPrefix} Creating embed and row for target #${i} (Opponent: ${initialTargetData.opponentName}), warId: ${warId}`);
+                const embed = createInitialTargetEmbed(initialTargetData, warId);
                 const row = createTargetActionRow(i, warId);
                 try {
                     const sentMessage = await warChannel.send({ embeds: [embed], components: [row] });
                     messageIds[i] = sentMessage.id;
-                    targetsToSave.push({ targetNumber: i, messageId: sentMessage.id }); // 저장할 타겟 정보 추가
+                    targetsToSave.push({ 
+                        ...initialTargetData, // opponentName, opponentTag, opponentTownhallLevel 포함
+                        messageId: sentMessage.id 
+                    }); 
                     console.debug(`${execLogPrefix} Sent message for target #${i}, messageId: ${sentMessage.id}`);
                 } catch (msgError) {
                     console.error(`${execLogPrefix} Failed to send message for target #${i} in channel <#${warChannel.id}>:`, msgError);
