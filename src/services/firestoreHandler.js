@@ -212,7 +212,7 @@ async function getWarSession(warId) {
 }
 
 module.exports = {
-    // db, // db 객체를 직접 내보내기보다는, 초기화 상태를 확인하는 함수를 제공하거나, 각 함수 내에서 확인하도록 함
+    db, // db 객체를 다시 내보냅니다.
     get firebaseInitialized() { // getter를 사용하여 최신 상태를 반영
         return firebaseInitialized;
     },

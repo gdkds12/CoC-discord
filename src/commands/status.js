@@ -80,6 +80,7 @@ module.exports = {
         let warIdToQuery = specifiedWarId;
         let warData; // Firestore war data
         let cocWarData; // CoC API war data
+        let errorOccurred = false; // errorOccurred 변수 선언 및 초기화
 
         try {
             console.info(`${execLogPrefix} Determining warId to query. Specified: ${specifiedWarId}`);
@@ -90,6 +91,14 @@ module.exports = {
                     return interaction.editReply({ content: '채널 정보를 가져올 수 없습니다. `warid`를 명시해주세요.', flags: [MessageFlags.Ephemeral] });
                 }
                 console.debug(`${execLogPrefix} No warId specified. Attempting to find active war for current channel: ${currentChannelId}`);
+                
+                // Firestore 초기화 및 db 객체 유효성 재확인
+                if (!firebaseInitialized || !db) {
+                    console.error(`${execLogPrefix} Firestore not properly initialized. db is ${db === null ? 'null' : (db === undefined ? 'undefined' : 'valid but firebaseInitialized is false')}. Replying and exiting.`);
+                    errorOccurred = true; // 이 변수는 try 블록 바깥에 선언되어 있어야 함
+                    return interaction.editReply({ content: '데이터베이스 연결 상태가 불안정하여 현재 채널의 전쟁 정보를 조회할 수 없습니다. 😔', flags: [MessageFlags.Ephemeral] });
+                }
+
                 const warsQuery = db.collection('wars').where('channelId', '==', currentChannelId).where('ended', '==', false).limit(1);
                 const warsSnapshot = await warsQuery.get();
                 
@@ -294,6 +303,7 @@ module.exports = {
             console.info(`${execLogPrefix} Command execution finished successfully.`);
 
         } catch (error) {
+            errorOccurred = true; // 오류 발생 시 true로 설정
             console.error(`${execLogPrefix} Error during command execution:`, error);
             let errorMessage = '상태 정보 조회 중 오류가 발생했습니다. 😥 로그를 확인해주세요.';
             // 오류 유형에 따른 메시지 분기 (startwar.js와 유사하게)
