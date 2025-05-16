@@ -54,11 +54,52 @@ function createTargetActionRow(targetNumber, warId) {
 }
 
 /**
+ * 목표 데이터를 기반으로 임베드 생성
+ * @param {object} targetData - 목표 데이터
+ * @param {string} warId - 전쟁 ID
+ * @returns {EmbedBuilder} 생성된 임베드
+ */
+function createTargetEmbed(targetData, warId) {
+    const { targetNumber, reservedBy = [], confidence = {}, result } = targetData;
+
+    const fields = [
+        { name: '👤 예약자 1', value: reservedBy && reservedBy[0] ? `<@${reservedBy[0]}>` : '`미지정`', inline: true },
+        { name: '👤 예약자 2', value: reservedBy && reservedBy[1] ? `<@${reservedBy[1]}>` : '`미지정`', inline: true },
+        { name: '\u200B', value: '\u200B' },
+        { 
+            name: '📊 예상 파괴율 (예약자 1)', 
+            value: reservedBy && reservedBy[0] && confidence && confidence[reservedBy[0]] !== undefined ? `\`${confidence[reservedBy[0]]} %\`` : '`- %`', 
+            inline: true 
+        },
+        { 
+            name: '📊 예상 파괴율 (예약자 2)', 
+            value: reservedBy && reservedBy[1] && confidence && confidence[reservedBy[1]] !== undefined ? `\`${confidence[reservedBy[1]]} %\`` : '`- %`', 
+            inline: true 
+        },
+        { name: '\u200B', value: '\u200B' },
+        { 
+            name: '⭐ 실제 결과', 
+            value: result ? `별: ${result.stars}개, 파괴율: ${result.destruction}%` : '`미입력`', 
+            inline: false 
+        },
+    ];
+
+    const embed = new EmbedBuilder()
+        .setColor(0x0099FF)
+        .setTitle(`🎯 목표 #${targetNumber}`)
+        .setDescription('아래 버튼을 사용하여 목표를 예약하거나 파괴율을 입력하세요.')
+        .addFields(fields)
+        .setFooter({ text: `War ID: ${warId} | 목표 ${targetNumber}` })
+        .setTimestamp();
+    return embed;
+}
+
+/**
  * 목표 Embed 메시지를 업데이트합니다.
  * @param {import('discord.js').Message} message - 업데이트할 메시지 객체
  * @param {object} targetData - 업데이트할 목표 데이터 (targetSchema 기반)
  * @param {string} warId - 현재 전쟁 ID
- * @returns {Promise<void>}
+ * @returns {Promise<EmbedBuilder>} 생성된 임베드
  */
 async function updateTargetEmbed(message, targetData, warId) {
     try {
@@ -74,4 +115,5 @@ module.exports = {
     createInitialTargetEmbed,
     createTargetActionRow,
     updateTargetEmbed,
+    createTargetEmbed
 }; 

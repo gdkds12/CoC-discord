@@ -8,7 +8,7 @@ const {
     updateTargetConfidence,
     updateTargetResult
 } = require('../utils/databaseHandler');
-const { updateTargetEmbed } = require('../utils/embedRenderer');
+const { updateTargetEmbed, createTargetActionRow } = require('../utils/embedRenderer');
 
 module.exports = {
     name: Events.InteractionCreate,
@@ -110,7 +110,8 @@ module.exports = {
                                 const messageToUpdate = await warChannel.messages.fetch(warSession.messageIds[targetNumber]);
                                 if (messageToUpdate) {
                                     const updatedEmbed = await updateTargetEmbed(messageToUpdate, updatedTarget, warId);
-                                    await messageToUpdate.edit({ embeds: [updatedEmbed] });
+                                    const actionRow = createTargetActionRow(targetNumber, warId);
+                                    await messageToUpdate.edit({ embeds: [updatedEmbed], components: [actionRow] });
                                 }
                             }
                         } catch (embedError) {

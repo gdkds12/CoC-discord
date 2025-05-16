@@ -200,7 +200,13 @@ module.exports = {
             }
             
             const warStartDateForChannel = new Date(formattedStartTime);
-            const channelName = `war-${warStartDateForChannel.getUTCFullYear()}${(warStartDateForChannel.getUTCMonth() + 1).toString().padStart(2, '0')}${warStartDateForChannel.getUTCDate().toString().padStart(2, '0')}-${currentWarData.opponent?.tag?.replace('#', '') || 'unknown'}`;
+            
+            // 채널 이름 생성 (환경변수 사용)
+            const channelPrefix = process.env.WAR_CHANNEL_PREFIX || 'war'; // 환경변수가 없으면 'war' 사용
+            const dateString = `${warStartDateForChannel.getUTCFullYear()}${(warStartDateForChannel.getUTCMonth() + 1).toString().padStart(2, '0')}${warStartDateForChannel.getUTCDate().toString().padStart(2, '0')}`;
+            const opponentTag = currentWarData.opponent?.tag?.replace('#', '') || 'unknown';
+            const channelName = `${channelPrefix}-${dateString}-${opponentTag}`;
+            
             console.info(`${execLogPrefix} Attempting to create war channel with name: ${channelName} (Category ID: ${category?.id})`);
 
             const warChannel = await guild.channels.create({
