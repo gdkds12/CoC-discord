@@ -61,58 +61,62 @@ module.exports = {
             const currentWarApiData = await getCurrentWar(warData.clanTag);
             let updatedResultsCount = 0;
 
-            if (currentWarApiData && currentWarApiData.state !== 'notInWar' && currentWarApiData.state !== 'accessDenied' && currentWarApiData.state !== 'error' && currentWarApiData.clan && currentWarApiData.clan.attacks && currentWarApiData.opponent && currentWarApiData.opponent.members) {
-                console.info(`${execLogPrefix} CoC API data received. Processing ${currentWarApiData.clan.attacks.length} attacks by our clan.`);
-                const opponentMembersApi = currentWarApiData.opponent.members;
-                const ourAttacksApi = currentWarApiData.clan.attacks;
+            if (currentWarApiData && currentWarApiData.state !== 'notInWar' && currentWarApiData.state !== 'accessDenied' && currentWarApiData.state !== 'error') {
+                if (currentWarApiData.clan && currentWarApiData.clan.attacks && Array.isArray(currentWarApiData.clan.attacks) && currentWarApiData.opponent && currentWarApiData.opponent.members) {
+                    console.info(`${execLogPrefix} CoC API data received. Processing ${currentWarApiData.clan.attacks.length} attacks by our clan.`);
+                    const opponentMembersApi = currentWarApiData.opponent.members;
+                    const ourAttacksApi = currentWarApiData.clan.attacks;
 
-                for (const opponentMemberApi of opponentMembersApi) {
-                    const targetNumber = opponentMemberApi.mapPosition;
-                    const defenderTag = opponentMemberApi.tag;
+                    for (const opponentMemberApi of opponentMembersApi) {
+                        const targetNumber = opponentMemberApi.mapPosition;
+                        const defenderTag = opponentMemberApi.tag;
 
-                    const attacksOnThisTarget = ourAttacksApi.filter(attack => attack.defenderTag === defenderTag);
-                    if (attacksOnThisTarget.length === 0) continue;
+                        const attacksOnThisTarget = ourAttacksApi.filter(attack => attack.defenderTag === defenderTag);
+                        if (attacksOnThisTarget.length === 0) continue;
 
-                    let bestAttackOnThisTarget = attacksOnThisTarget.reduce((best, current) => {
-                        if (!best) return current;
-                        if (current.stars > best.stars) return current;
-                        if (current.stars === best.stars && current.destructionPercentage > best.destructionPercentage) return current;
-                        return best;
-                    }, null);
+                        let bestAttackOnThisTarget = attacksOnThisTarget.reduce((best, current) => {
+                            if (!best) return current;
+                            if (current.stars > best.stars) return current;
+                            if (current.stars === best.stars && current.destructionPercentage > best.destructionPercentage) return current;
+                            return best;
+                        }, null);
 
-                    if (bestAttackOnThisTarget) {
-                        const existingTargetData = await getTarget(warId, targetNumber);
-                        const existingResult = existingTargetData?.result || { stars: -1, destruction: -1 };
+                        if (bestAttackOnThisTarget) {
+                            const existingTargetData = await getTarget(warId, targetNumber);
+                            const existingResult = existingTargetData?.result || { stars: -1, destruction: -1 };
 
-                        const shouldUpdate = 
-                            (bestAttackOnThisTarget.stars > existingResult.stars) ||
-                            (bestAttackOnThisTarget.stars === existingResult.stars && bestAttackOnThisTarget.destructionPercentage > existingResult.destruction) ||
-                            (!existingResult.attackerCocTag && !existingResult.attackerDiscordId) ||
-                            (existingResult.attackerCocTag && existingResult.attackerCocTag !== bestAttackOnThisTarget.attackerTag && !existingResult.attackerDiscordId);
-                        
-                        if (existingResult.attackerDiscordId) {
-                             console.debug(`${execLogPrefix} Target #${targetNumber} has manual result by ${existingResult.attackerDiscordId}. Skipping API update.`);
-                        } else if (shouldUpdate) {
-                            console.info(`${execLogPrefix} Updating target #${targetNumber} (Def: ${defenderTag}) with API result: ${bestAttackOnThisTarget.stars}⭐ ${bestAttackOnThisTarget.destructionPercentage}% by ${bestAttackOnThisTarget.attackerTag}`);
-                            await updateTargetResult(
-                                warId, 
-                                targetNumber, 
-                                bestAttackOnThisTarget.stars, 
-                                bestAttackOnThisTarget.destructionPercentage, 
-                                bestAttackOnThisTarget.attackerTag,
-                                null
-                            );
-                            updatedResultsCount++;
-                        } else {
-                            console.debug(`${execLogPrefix} No better API result for target #${targetNumber}. DB: ${existingResult.stars}⭐, API: ${bestAttackOnThisTarget.stars}⭐`);
+                            const shouldUpdate = 
+                                (bestAttackOnThisTarget.stars > existingResult.stars) ||
+                                (bestAttackOnThisTarget.stars === existingResult.stars && bestAttackOnThisTarget.destructionPercentage > existingResult.destruction) ||
+                                (!existingResult.attackerCocTag && !existingResult.attackerDiscordId) ||
+                                (existingResult.attackerCocTag && existingResult.attackerCocTag !== bestAttackOnThisTarget.attackerTag && !existingResult.attackerDiscordId);
+                            
+                            if (existingResult.attackerDiscordId) {
+                                console.debug(`${execLogPrefix} Target #${targetNumber} has manual result by ${existingResult.attackerDiscordId}. Skipping API update.`);
+                            } else if (shouldUpdate) {
+                                console.info(`${execLogPrefix} Updating target #${targetNumber} (Def: ${defenderTag}) with API result: ${bestAttackOnThisTarget.stars}⭐ ${bestAttackOnThisTarget.destructionPercentage}% by ${bestAttackOnThisTarget.attackerTag}`);
+                                await updateTargetResult(
+                                    warId, 
+                                    targetNumber, 
+                                    bestAttackOnThisTarget.stars, 
+                                    bestAttackOnThisTarget.destructionPercentage, 
+                                    bestAttackOnThisTarget.attackerTag,
+                                    null
+                                );
+                                updatedResultsCount++;
+                            } else {
+                                console.debug(`${execLogPrefix} No better API result for target #${targetNumber}. DB: ${existingResult.stars}⭐, API: ${bestAttackOnThisTarget.stars}⭐`);
+                            }
                         }
                     }
-                }
-                if (updatedResultsCount > 0) {
-                    console.info(`${execLogPrefix} Updated ${updatedResultsCount} target results from CoC API.`);
+                    if (updatedResultsCount > 0) {
+                        console.info(`${execLogPrefix} Updated ${updatedResultsCount} target results from CoC API.`);
+                    }
+                } else {
+                    console.warn(`${execLogPrefix} CoC API data for attacks is incomplete or not an array. Clan attacks:`, currentWarApiData.clan?.attacks);
                 }
             } else {
-                console.warn(`${execLogPrefix} Could not fetch or process CoC API war data for attacks. State: ${currentWarApiData?.state}`);
+                console.warn(`${execLogPrefix} Could not fetch or process CoC API war data. State: ${currentWarApiData?.state}, Reason: ${currentWarApiData?.reason}`);
             }
 
             const targets = await getTargetsByWarId(warId);
@@ -126,10 +130,12 @@ module.exports = {
 
             if (currentWarApiData && currentWarApiData.clan && currentWarApiData.clan.members) {
                 totalPossibleAttacksApi = currentWarApiData.clan.members.length * attacksPerMemberSetting;
-                totalAttacksUsedApi = currentWarApiData.clan.attacks?.length || 0;
+                // API 응답에 attacks가 없을 수도 있으므로, 확인 후 참조
+                const apiAttacks = (currentWarApiData.clan.attacks && Array.isArray(currentWarApiData.clan.attacks)) ? currentWarApiData.clan.attacks : [];
+                totalAttacksUsedApi = apiAttacks.length;
 
                 for (const apiMember of currentWarApiData.clan.members) {
-                    const attacksMadeByThisMember = currentWarApiData.clan.attacks?.filter(att => att.attackerTag === apiMember.tag).length || 0;
+                    const attacksMadeByThisMember = apiAttacks.filter(att => att.attackerTag === apiMember.tag).length;
                     const attacksLeftForThisMember = attacksPerMemberSetting - attacksMadeByThisMember;
                     
                     // DB 정보와 매칭하여 Discord ID 가져오기 시도
@@ -201,7 +207,7 @@ module.exports = {
 
             // 클랜원 활동 현황 (API 기반)
             if (clanMembersInfo.length > 0) {
-                statusEmbed.addFields({ name: '\u200B', value: '**�� 클랜원 현황 (API 기준)**' });
+                statusEmbed.addFields({ name: '\u200B', value: '**👤 클랜원 현황 (API 기준)**' });
                 let memberFieldsCount = 0;
                 for (const member of clanMembersInfo) {
                     if (memberFieldsCount < 6) { // 너무 많으면 잘릴 수 있으니 일부만 표시 (예시)
