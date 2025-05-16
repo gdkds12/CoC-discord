@@ -1,0 +1,31 @@
+{
+  "name": "coc-collaborative-war-map-planner",
+  "version": "0.1.0",
+  "description": "Discord bot for Clash of Clans war planning",
+  "main": "src/bot.js",
+  "scripts": {
+    "start": "node src/bot.js",
+    "dev": "nodemon src/bot.js",
+    "deploy-commands": "node scripts/deploy-commands.js",
+    "pm2": "pm2 start src/bot.js --name coc-planner",
+    "pm2-save": "pm2 save"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "clash-of-clans",
+    "coc"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "discord.js": "^14.7.1",
+    "dotenv": "^16.0.3",
+    "firebase-admin": "^11.5.0", 
+    "node-cron": "^3.0.2",
+    "pdfkit": "^0.13.0" 
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.20"
+  }
+} 
