@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType, EmbedBuilder } = require('discord.js');
 const { getWar, saveWar, saveInitialTargets } = require('../utils/databaseHandler'); // Firestore 핸들러 대신 SQLite 핸들러
-const { getCurrentWar } = require('../services/cocApiService'); // CoC API 서비스 추가
+const { getCurrentWar, getClanInfo } = require('../services/cocApiService'); // CoC API 서비스 추가
 const { createInitialTargetEmbed, createTargetActionRow } = require('../utils/embedRenderer'); // Embed 및 버튼 생성 함수
 // const clashApi = require('../services/clashApiHandler');
 require('dotenv').config(); // .env 파일 로드
@@ -13,7 +13,11 @@ module.exports = {
         .setName(COMMAND_NAME)
         .setDescription('클랜의 현재 CoC 전쟁 정보를 기반으로 협업 채널을 생성합니다.')
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels) // '채널 관리' 권한이 있는 사용자만 사용 가능 (기획서상 Leader 역할)
-        .setDMPermission(false), // DM에서 사용 불가
+        .setDMPermission(false) // DM에서 사용 불가
+        .addBooleanOption(option => 
+            option.setName('테스트모드')
+                 .setDescription('전쟁 중이 아닐 때도 테스트용으로 채널 생성을 허용합니다.')
+                 .setRequired(false)),
     async execute(interaction) {
         const { user, guild } = interaction;
         const execLogPrefix = `${logPrefix}[${user.tag}(${user.id})][Guild:${guild.id}]`;
@@ -27,19 +31,115 @@ module.exports = {
         console.debug(`${execLogPrefix} Deferring reply.`);
         await interaction.deferReply({ ephemeral: true }); // 초기 응답 지연
 
+        // 테스트 모드 옵션 확인
+        const isTestMode = interaction.options.getBoolean('테스트모드') || false;
+        console.debug(`${execLogPrefix} Test mode: ${isTestMode}`);
+
         try {
             console.info(`${execLogPrefix} Fetching current war data from CoC API.`);
-            const currentWarData = await getCurrentWar();
+            let currentWarData = await getCurrentWar();
 
+            // API 호출 실패
             if (!currentWarData) {
                 console.warn(`${execLogPrefix} No current war data received from CoC API or API call failed.`);
-                return interaction.editReply({ content: 'CoC API에서 전쟁 정보를 가져올 수 없습니다. 😥 API 토큰, 클랜 태그, IP 허용 목록을 확인하거나, 현재 전쟁이 진행 중인지 확인해주세요.', ephemeral: true });
+                return interaction.editReply({ content: 'CoC API에서 전쟁 정보를 가져올 수 없습니다. 😥 API 토큰, 클랜 태그, IP 허용 목록을 확인하세요.', ephemeral: true });
             }
             console.info(`${execLogPrefix} CoC API current war data received. State: ${currentWarData.state}`);
             
+            // 전쟁 중이 아닌 경우 처리
             if (currentWarData.state === 'notInWar') {
-                console.info(`${execLogPrefix} Clan is not in war (state: notInWar). Replying and exiting.`);
-                return interaction.editReply({ content: '클랜이 현재 전쟁 중이 아닙니다.  전쟁 시작 후 다시 시도해주세요. ⚔️', ephemeral: true });
+                console.info(`${execLogPrefix} Clan is not in war (state: notInWar).`);
+                
+                // 테스트 모드일 경우 가상 데이터 생성
+                if (isTestMode) {
+                    console.info(`${execLogPrefix} Test mode enabled. Creating test war data.`);
+                    
+                    // 클랜 정보 가져오기
+                    const clanInfo = await getClanInfo();
+                    if (!clanInfo) {
+                        return interaction.editReply({ content: '테스트 모드에서 필요한 클랜 정보를 가져올 수 없습니다. 😥', ephemeral: true });
+                    }
+                    
+                    // 가상의 전쟁 데이터 생성
+                    currentWarData = {
+                        state: 'preparation',
+                        teamSize: parseInt(process.env.DEFAULT_TEAM_SIZE) || 20,
+                        startTime: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(), // 4시간 후 시작
+                        endTime: new Date(Date.now() + 28 * 60 * 60 * 1000).toISOString(), // 28시간 후 종료
+                        clan: {
+                            tag: clanInfo.tag,
+                            name: clanInfo.name,
+                            clanLevel: clanInfo.clanLevel,
+                            badgeUrls: clanInfo.badgeUrls,
+                        },
+                        opponent: {
+                            tag: '#TEST0000',
+                            name: '테스트 상대 클랜',
+                            clanLevel: 10,
+                            badgeUrls: {
+                                small: 'https://api-assets.clashofclans.com/badges/70/iqeKHyNwF1J1j2Ga1_EvI-9u1jGcN_m4V05ML0m7h04.png',
+                                medium: 'https://api-assets.clashofclans.com/badges/200/iqeKHyNwF1J1j2Ga1_EvI-9u1jGcN_m4V05ML0m7h04.png',
+                            }
+                        },
+                        attacksPerMember: parseInt(process.env.MAX_ATTACKS_PER_MEMBER) || 2,
+                    };
+                    
+                    console.info(`${execLogPrefix} Test war data created with teamSize: ${currentWarData.teamSize}`);
+                } else {
+                    // 테스트 모드가 아닐 경우 오류 메시지 출력
+                    return interaction.editReply({ content: '클랜이 현재 전쟁 중이 아닙니다. 전쟁 시작 후 다시 시도하거나, 테스트 모드 옵션을 활성화하세요. ⚔️', ephemeral: true });
+                }
+            }
+            
+            // 접근 권한 없음 상태 처리
+            if (currentWarData.state === 'accessDenied') {
+                console.info(`${execLogPrefix} Access denied to war data (state: accessDenied, reason: ${currentWarData.reason}).`);
+                
+                // 테스트 모드일 경우 가상 데이터 생성
+                if (isTestMode) {
+                    console.info(`${execLogPrefix} Test mode enabled. Creating test war data despite access denial.`);
+                    
+                    // 클랜 정보 가져오기
+                    const clanInfo = await getClanInfo();
+                    if (!clanInfo) {
+                        return interaction.editReply({ 
+                            content: '테스트 모드에서 필요한 클랜 정보를 가져올 수 없습니다. 😥', 
+                            ephemeral: true 
+                        });
+                    }
+                    
+                    // 가상의 전쟁 데이터 생성 (notInWar와 동일)
+                    currentWarData = {
+                        state: 'preparation',
+                        teamSize: parseInt(process.env.DEFAULT_TEAM_SIZE) || 20,
+                        startTime: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+                        endTime: new Date(Date.now() + 28 * 60 * 60 * 1000).toISOString(),
+                        clan: {
+                            tag: clanInfo.tag,
+                            name: clanInfo.name,
+                            clanLevel: clanInfo.clanLevel,
+                            badgeUrls: clanInfo.badgeUrls,
+                        },
+                        opponent: {
+                            tag: '#TEST0000',
+                            name: '테스트 상대 클랜',
+                            clanLevel: 10,
+                            badgeUrls: {
+                                small: 'https://api-assets.clashofclans.com/badges/70/iqeKHyNwF1J1j2Ga1_EvI-9u1jGcN_m4V05ML0m7h04.png',
+                                medium: 'https://api-assets.clashofclans.com/badges/200/iqeKHyNwF1J1j2Ga1_EvI-9u1jGcN_m4V05ML0m7h04.png',
+                            }
+                        },
+                        attacksPerMember: parseInt(process.env.MAX_ATTACKS_PER_MEMBER) || 2,
+                    };
+                    
+                    console.info(`${execLogPrefix} Test war data created with teamSize: ${currentWarData.teamSize}`);
+                } else {
+                    // 테스트 모드가 아닐 경우 오류 메시지 출력
+                    return interaction.editReply({ 
+                        content: `클랜 전쟁 정보에 접근할 권한이 없습니다. 가능한 원인:\n1. 클랜 전쟁 로그가 비공개로 설정됨\n2. 신규 클랜(일주일 이내)은 API 접근이 제한됨\n\n테스트 모드로 시도하려면 "/startwar 테스트모드:true" 명령어를 사용하세요.`, 
+                        ephemeral: true 
+                    });
+                }
             }
 
             // 'warEnded' 상태도 일단 허용 (지난 전쟁 정보로 채널 만들고 싶을 수도 있으니)
