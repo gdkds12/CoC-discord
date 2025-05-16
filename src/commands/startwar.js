@@ -57,18 +57,14 @@ module.exports = {
             const teamSize = currentWarData.teamSize || parseInt(process.env.DEFAULT_TEAM_SIZE) || 10;
             console.debug(`${execLogPrefix} Team size determined: ${teamSize} (API: ${currentWarData.teamSize}, Default: ${process.env.DEFAULT_TEAM_SIZE})`);
             
-            const warStartTimeISO = currentWarData.startTime !== '0001-01-01T00:00:00.000Z' ? currentWarData.startTime : currentWarData.preparationStartTime;
-            let warId;
-            console.debug(`${execLogPrefix} War start time from API (ISO): ${warStartTimeISO}`);
+            // 전쟁 시작 시간을 ISO 형식으로 변환
+            const warStartTime = new Date(currentWarData.startTime);
+            const formattedStartTime = warStartTime.toISOString();
+            console.info(`${execLogPrefix} War start time from API (ISO): ${formattedStartTime}`);
 
-            if (warStartTimeISO && warStartTimeISO !== '0001-01-01T00:00:00.000Z') {
-                const warStartDate = new Date(warStartTimeISO);
-                warId = `${clanTag.replace('#', '')}-${warStartDate.getUTCFullYear()}${(warStartDate.getUTCMonth() + 1).toString().padStart(2, '0')}${warStartDate.getUTCDate().toString().padStart(2, '0')}${warStartDate.getUTCHours().toString().padStart(2, '0')}${warStartDate.getUTCMinutes().toString().padStart(2, '0')}`;
-                console.info(`${execLogPrefix} Generated War ID: ${warId}`);
-            } else {
-                console.error(`${execLogPrefix} Failed to get valid war start time from CoC API. Data:`, currentWarData);
-                return interaction.editReply({ content: 'CoC API에서 전쟁 시작 시간을 가져오는 데 실패했습니다. 잠시 후 다시 시도하거나 관리자에게 문의하세요.', ephemeral: true });
-            }
+            // 전쟁 ID 생성 (클랜 태그 + 시작 시간)
+            const warId = `${clanTag.replace('#', '')}-${warStartTime.getTime()}`;
+            console.info(`${execLogPrefix} Generated War ID: ${warId}`);
 
             console.info(`${execLogPrefix} Checking for existing war session in DB with warId: ${warId}`);
             const existingWar = await getWar(warId); // SQLite 함수로 변경
@@ -103,7 +99,7 @@ module.exports = {
                 console.info(`${execLogPrefix} Found existing war category: ${category.name} (ID: ${category.id})`);
             }
             
-            const warStartDateForChannel = new Date(warStartTimeISO);
+            const warStartDateForChannel = new Date(formattedStartTime);
             const channelName = `war-${warStartDateForChannel.getUTCFullYear()}${(warStartDateForChannel.getUTCMonth() + 1).toString().padStart(2, '0')}${warStartDateForChannel.getUTCDate().toString().padStart(2, '0')}-${currentWarData.opponent?.tag?.replace('#', '') || 'unknown'}`;
             console.info(`${execLogPrefix} Attempting to create war channel with name: ${channelName} (Category ID: ${category?.id})`);
 

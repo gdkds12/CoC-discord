@@ -7,6 +7,44 @@ const dbPath = path.resolve(__dirname, '../../coc_bot.db');
 // 데이터베이스 연결 객체
 let db = null;
 
+// 데이터베이스 호출 속도 제한 설정
+const RATE_LIMIT = {
+    windowMs: 1000, // 1초
+    max: 10 // 최대 10회 호출
+};
+
+const rateLimit = new Map();
+
+function checkRateLimit(operation) {
+    const now = Date.now();
+    const windowStart = now - RATE_LIMIT.windowMs;
+    
+    if (!rateLimit.has(operation)) {
+        rateLimit.set(operation, []);
+    }
+    
+    const calls = rateLimit.get(operation);
+    const recentCalls = calls.filter(time => time > windowStart);
+    
+    if (recentCalls.length >= RATE_LIMIT.max) {
+        throw new Error('데이터베이스 호출 속도 제한에 도달했습니다. 잠시 후 다시 시도해주세요.');
+    }
+    
+    recentCalls.push(now);
+    rateLimit.set(operation, recentCalls);
+}
+
+// 데이터베이스 작업 래퍼 함수
+async function withRateLimit(operation, callback) {
+    checkRateLimit(operation);
+    try {
+        return await callback();
+    } catch (error) {
+        console.error(`[DatabaseHandler] Error in ${operation}:`, error);
+        throw error;
+    }
+}
+
 // 데이터베이스 연결 및 초기화 함수
 const initializeDatabase = () => {
   return new Promise((resolve, reject) => {

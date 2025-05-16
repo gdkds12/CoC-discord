@@ -1,4 +1,4 @@
-const { Events, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
+const { Events, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, MessageFlags } = require('discord.js');
 const {
     getWar,
     getTarget,
@@ -55,67 +55,45 @@ module.exports = {
             try {
                 console.debug(`${buttonLogPrefix} Processing action: ${action}`);
                 if (action === 'reserve') {
-                    console.debug(`${buttonLogPrefix} Reserve action started.`);
-                    let memberProfile = await getOrCreateMember(warId, userId);
-                    console.debug(`${buttonLogPrefix} Fetched/created member profile:`, memberProfile ? `Exists (attacksLeft: ${memberProfile.attacksLeft})` : 'Not found/created');
-
-                    if (memberProfile.attacksLeft <= 0) {
-                        console.info(`${buttonLogPrefix} No attacks left for user.`);
-                        return interaction.editReply({ content: '더 이상 공격권이 없습니다. 😢' });
-                    }
+                    console.info(`${logPrefix} Reserve action started.`);
                     
-                    const currentReservedTargets = JSON.parse(memberProfile.reservedTargets || '[]');
-                    if (currentReservedTargets.length >= 2) {
-                        console.info(`${buttonLogPrefix} User already has 2 targets reserved.`);
-                        return interaction.editReply({ content: '이미 2개의 목표를 예약했습니다. 기존 예약을 해제 후 다시 시도해주세요. 🛡️🛡️' });
-                    }
-                    if (currentReservedTargets.includes(targetNumber)) {
-                        console.info(`${buttonLogPrefix} User already reserved this target.`);
-                         return interaction.editReply({ content: '이미 이 목표를 예약했습니다. 🤔'});
-                    }
-                    console.debug(`${buttonLogPrefix} Calling updateTargetReservation for reserve.`);
-                    const reservationResult = await updateTargetReservation(warId, targetNumber, userId, true);
-                    console.debug(`${buttonLogPrefix} updateTargetReservation result:`, reservationResult);
+                    try {
+                        // 멤버 프로필 조회 또는 생성
+                        const memberProfile = await getOrCreateMember(warId, userId);
+                        console.info(`${logPrefix} Fetched/created member profile: ${memberProfile ? 'Exists' : 'Created'} (attacksLeft: ${memberProfile?.attacksLeft})`);
 
-                    if (!reservationResult.updated) {
-                        let replyMessage = '목표 예약에 실패했습니다. 다시 시도해주세요. 🤔';
-                        if (reservationResult.message === 'Already reserved') {
-                            replyMessage = '이미 본인이 예약한 목표이거나 다른 유저가 먼저 예약했습니다. 확인해주세요. 🧐';
-                        } else if (reservationResult.message === 'Reservation limit reached') {
-                            replyMessage = '이 목표는 이미 다른 유저들이 모두 예약했습니다. 🧐';
+                        // 예약 가능 여부 확인
+                        if (!memberProfile || memberProfile.attacksLeft <= 0) {
+                            return interaction.editReply({ 
+                                content: '남은 공격 횟수가 없습니다. 😥', 
+                                flags: [MessageFlags.Ephemeral] 
+                            });
                         }
-                        console.warn(`${buttonLogPrefix} Target reservation failed: ${reservationResult.message || 'Unknown reason from DB call'}`);
-                        return interaction.editReply({ content: replyMessage });
+
+                        // 예약 처리
+                        const updatedTarget = await updateTargetReservation(warId, targetNumber, userId, true);
+                        if (!updatedTarget) {
+                            return interaction.editReply({ 
+                                content: '목표 예약에 실패했습니다. 😥', 
+                                flags: [MessageFlags.Ephemeral] 
+                            });
+                        }
+
+                        // 임베드 업데이트
+                        const updatedEmbed = await updateTargetEmbed(updatedTarget, warId);
+                        await interaction.message.edit({ embeds: [updatedEmbed] });
+
+                        await interaction.editReply({ 
+                            content: `목표 #${targetNumber}를 예약했습니다! 🎯`, 
+                            flags: [MessageFlags.Ephemeral] 
+                        });
+                    } catch (error) {
+                        console.error(`${logPrefix} Button interaction error:`, error);
+                        await interaction.editReply({ 
+                            content: '예약 처리 중 오류가 발생했습니다. 😥', 
+                            flags: [MessageFlags.Ephemeral] 
+                        });
                     }
-
-                    const newReservedTargets = [...currentReservedTargets, targetNumber];
-                    const newAttacksLeft = Math.max(0, (memberProfile.attacksLeft || 0) - 1);
-                    await updateMemberProfile(warId, userId, { reservedTargets: newReservedTargets, attacksLeft: newAttacksLeft });
-                    memberProfile.attacksLeft = newAttacksLeft;
-                    memberProfile.reservedTargets = JSON.stringify(newReservedTargets);
-                    console.info(`${buttonLogPrefix} Member profile updated after reservation. Attacks left: ${memberProfile.attacksLeft}`);
-
-                    const warSessionData = await getWar(warId);
-                    if (!warSessionData || !warSessionData.messageIds || !warSessionData.messageIds[targetNumber]) {
-                        console.error(`${buttonLogPrefix} Message ID not found for warId=${warId}, targetNumber=${targetNumber}`);
-                        return interaction.editReply({ content: '예약은 되었으나, 전쟁 채널의 메시지를 업데이트할 수 없습니다. 관리자에게 문의하세요.' });
-                    }
-                    console.debug(`${buttonLogPrefix} War session data fetched. Target messageId: ${warSessionData.messageIds[targetNumber]}`);
-                    
-                    const warChannel = interaction.guild.channels.cache.get(warSessionData.channelId);
-                    if (!warChannel) {
-                        console.error(`${buttonLogPrefix} War channel not found: ${warSessionData.channelId}`);
-                        return interaction.editReply({ content: '예약은 되었으나, 전쟁 채널을 찾을 수 없어 메시지를 업데이트할 수 없습니다.' });
-                    }
-                    console.debug(`${buttonLogPrefix} War channel fetched: ${warChannel.name}`);
-                    const messageToUpdate = await warChannel.messages.fetch(warSessionData.messageIds[targetNumber]);
-                    console.debug(`${buttonLogPrefix} Message to update fetched: ${messageToUpdate.id}`);
-                    await updateTargetEmbed(messageToUpdate, reservationResult, warId);
-                    console.info(`${buttonLogPrefix} Target embed updated successfully.`);
-
-                    await interaction.editReply({ content: `⚔️ 목표 #${targetNumber} 예약 완료! 남은 공격권: ${memberProfile.attacksLeft}개` });
-                    console.info(`${buttonLogPrefix} Reserve action completed.`);
-
                 } else if (action === 'cancel') {
                     console.debug(`${buttonLogPrefix} Cancel action started.`);
                     let memberProfile = await getOrCreateMember(warId, userId);
