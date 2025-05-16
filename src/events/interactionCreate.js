@@ -1,26 +1,21 @@
 const { Events, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
 const {
-    // db, // 직접 사용은 줄이고 함수 사용 권장. firestoreHandler.firebaseInitialized로 상태 확인
-    firebaseInitialized, // 초기화 상태 플래그 직접 임포트
+    getWar,
     getTarget,
     updateTargetReservation,
-    getMemberProfile,
+    getOrCreateMember,
     updateMemberProfile,
-    getWarSession
-} = require('../services/firestoreHandler');
+    updateTargetConfidence,
+    updateTargetResult
+} = require('../utils/databaseHandler');
 const { updateTargetEmbed } = require('../utils/embedRenderer');
 
 module.exports = {
     name: Events.InteractionCreate,
     async execute(interaction) {
         const { user, guild } = interaction;
-        const logPrefix = `[InteractionCreate][${user.tag}(${user.id})]`;
-
-        // Firestore 초기화 상태 확인
-        if (!firebaseInitialized) {
-            console.warn(`${logPrefix} Firestore is not initialized. Interaction may not work as expected.`);
-            // 사용자에게 알릴 필요가 있다면, 특정 인터랙션 타입에 따라 응답 처리
-        }
+        const userId = user.id;
+        const logPrefix = `[InteractionCreate][${user.tag}(${userId})]`;
 
         // Slash Command 처리
         if (interaction.isChatInputCommand()) {
@@ -50,18 +45,10 @@ module.exports = {
         if (interaction.isButton()) {
             const [action, targetNumberStr, warId] = interaction.customId.split('_');
             const targetNumber = parseInt(targetNumberStr, 10);
-            // warId가 없을 수도 있는 customId 형식 (예: 단순 확인 버튼)에 대비
             const buttonLogPrefix = `${logPrefix}[Button][${interaction.customId}][warId:${warId || 'N/A'}, target:${targetNumberStr || 'N/A'}]`;
             
             console.info(`${buttonLogPrefix} Button interaction received.`);
             
-            // 버튼 인터랙션은 대부분 DB 작업이 필요하므로 Firestore 초기화 여부 재확인 및 경고
-            if (!firebaseInitialized) {
-                console.error(`${buttonLogPrefix} Firestore not initialized. Aborting button action.`);
-                try { await interaction.reply({ content: '데이터베이스 연결 문제로 작업을 처리할 수 없습니다. 관리자에게 문의하세요.', ephemeral: true }); } catch(e) { console.warn(`${buttonLogPrefix} Firestore init check reply failed:`, e);}
-                return;
-            }
-
             await interaction.deferReply({ ephemeral: true });
             console.debug(`${buttonLogPrefix} Reply deferred.`);
 
@@ -69,42 +56,46 @@ module.exports = {
                 console.debug(`${buttonLogPrefix} Processing action: ${action}`);
                 if (action === 'reserve') {
                     console.debug(`${buttonLogPrefix} Reserve action started.`);
-                    let memberProfile = await getMemberProfile(userId);
-                    console.debug(`${buttonLogPrefix} Fetched member profile:`, memberProfile ? `Exists (attacksLeft: ${memberProfile.attacksLeft})` : 'Not found');
-                    if (!memberProfile) {
-                        memberProfile = { uid: userId, targets: [], attacksLeft: 2, confidence: {} };
-                        await updateMemberProfile(userId, memberProfile);
-                        console.info(`${buttonLogPrefix} New member profile created for userId: ${userId}`);
-                    }
+                    let memberProfile = await getOrCreateMember(warId, userId);
+                    console.debug(`${buttonLogPrefix} Fetched/created member profile:`, memberProfile ? `Exists (attacksLeft: ${memberProfile.attacksLeft})` : 'Not found/created');
 
                     if (memberProfile.attacksLeft <= 0) {
                         console.info(`${buttonLogPrefix} No attacks left for user.`);
                         return interaction.editReply({ content: '더 이상 공격권이 없습니다. 😢' });
                     }
-                    if (memberProfile.targets && memberProfile.targets.length >= 2) {
+                    
+                    const currentReservedTargets = JSON.parse(memberProfile.reservedTargets || '[]');
+                    if (currentReservedTargets.length >= 2) {
                         console.info(`${buttonLogPrefix} User already has 2 targets reserved.`);
                         return interaction.editReply({ content: '이미 2개의 목표를 예약했습니다. 기존 예약을 해제 후 다시 시도해주세요. 🛡️🛡️' });
                     }
-                    if (memberProfile.targets && memberProfile.targets.includes(targetNumber)) {
+                    if (currentReservedTargets.includes(targetNumber)) {
                         console.info(`${buttonLogPrefix} User already reserved this target.`);
                          return interaction.editReply({ content: '이미 이 목표를 예약했습니다. 🤔'});
                     }
                     console.debug(`${buttonLogPrefix} Calling updateTargetReservation for reserve.`);
-                    const reservationResult = await updateTargetReservation(warId, targetNumber, userId, 'reserve');
+                    const reservationResult = await updateTargetReservation(warId, targetNumber, userId, true);
                     console.debug(`${buttonLogPrefix} updateTargetReservation result:`, reservationResult);
 
-                    if (reservationResult.alreadyReserved) {
-                        console.info(`${buttonLogPrefix} Target already reserved by someone else or user themself.`);
-                        return interaction.editReply({ content: '이미 예약된 목표이거나, 본인이 예약한 상태입니다. 확인해주세요. 🧐' });
+                    if (!reservationResult.updated) {
+                        let replyMessage = '목표 예약에 실패했습니다. 다시 시도해주세요. 🤔';
+                        if (reservationResult.message === 'Already reserved') {
+                            replyMessage = '이미 본인이 예약한 목표이거나 다른 유저가 먼저 예약했습니다. 확인해주세요. 🧐';
+                        } else if (reservationResult.message === 'Reservation limit reached') {
+                            replyMessage = '이 목표는 이미 다른 유저들이 모두 예약했습니다. 🧐';
+                        }
+                        console.warn(`${buttonLogPrefix} Target reservation failed: ${reservationResult.message || 'Unknown reason from DB call'}`);
+                        return interaction.editReply({ content: replyMessage });
                     }
 
-                    memberProfile.targets = Array.isArray(memberProfile.targets) ? memberProfile.targets : [];
-                    memberProfile.targets.push(targetNumber);
-                    memberProfile.attacksLeft = Math.max(0, (memberProfile.attacksLeft || 0) - 1);
-                    await updateMemberProfile(userId, memberProfile);
+                    const newReservedTargets = [...currentReservedTargets, targetNumber];
+                    const newAttacksLeft = Math.max(0, (memberProfile.attacksLeft || 0) - 1);
+                    await updateMemberProfile(warId, userId, { reservedTargets: newReservedTargets, attacksLeft: newAttacksLeft });
+                    memberProfile.attacksLeft = newAttacksLeft;
+                    memberProfile.reservedTargets = JSON.stringify(newReservedTargets);
                     console.info(`${buttonLogPrefix} Member profile updated after reservation. Attacks left: ${memberProfile.attacksLeft}`);
 
-                    const warSessionData = await getWarSession(warId);
+                    const warSessionData = await getWar(warId);
                     if (!warSessionData || !warSessionData.messageIds || !warSessionData.messageIds[targetNumber]) {
                         console.error(`${buttonLogPrefix} Message ID not found for warId=${warId}, targetNumber=${targetNumber}`);
                         return interaction.editReply({ content: '예약은 되었으나, 전쟁 채널의 메시지를 업데이트할 수 없습니다. 관리자에게 문의하세요.' });
@@ -127,30 +118,39 @@ module.exports = {
 
                 } else if (action === 'cancel') {
                     console.debug(`${buttonLogPrefix} Cancel action started.`);
-                    let memberProfile = await getMemberProfile(userId);
-                    console.debug(`${buttonLogPrefix} Fetched member profile for cancel:`, memberProfile ? `Exists (targets: ${memberProfile.targets})` : 'Not found');
-
-                    if (!memberProfile || !memberProfile.targets || !memberProfile.targets.includes(targetNumber)) {
-                        console.info(`${buttonLogPrefix} User has not reserved this target or profile not found.`);
+                    let memberProfile = await getOrCreateMember(warId, userId);
+                    console.debug(`${buttonLogPrefix} Fetched/created member profile for cancel:`, memberProfile ? `Exists (reservedTargets: ${memberProfile.reservedTargets})` : 'Not found/created');
+                    
+                    const currentReservedTargets = JSON.parse(memberProfile.reservedTargets || '[]');
+                    if (!memberProfile || !currentReservedTargets.includes(targetNumber)) {
+                        console.info(`${buttonLogPrefix} User has not reserved this target or profile not found/created.`);
                         return interaction.editReply({ content: '이 목표를 예약하지 않았거나 프로필 정보가 없습니다. 🤷' });
                     }
 
                     console.debug(`${buttonLogPrefix} Calling updateTargetReservation for cancel.`);
-                    const cancelResult = await updateTargetReservation(warId, targetNumber, userId, 'cancel');
+                    const cancelResult = await updateTargetReservation(warId, targetNumber, userId, false);
                     console.debug(`${buttonLogPrefix} updateTargetReservation (cancel) result:`, cancelResult);
 
-                    memberProfile.targets = memberProfile.targets.filter(tNum => tNum !== targetNumber);
+                    if (!cancelResult.updated) {
+                        console.warn(`${buttonLogPrefix} Target cancellation failed in DB or target was not reserved by user. Message: ${cancelResult.message}`);
+                        return interaction.editReply({ content: `예약 해제에 실패했습니다. ${cancelResult.message ? cancelResult.message : '다시 시도해주세요.'} 🤔` });
+                    }
+
+                    const newReservedTargets = currentReservedTargets.filter(tNum => tNum !== targetNumber);
                     const maxAttacks = parseInt(process.env.MAX_ATTACKS_PER_MEMBER) || 2;
-                    memberProfile.attacksLeft = Math.min(maxAttacks, (memberProfile.attacksLeft || 0) + 1);
-                    
-                    if (memberProfile.confidence && memberProfile.confidence[targetNumber]) {
-                        delete memberProfile.confidence[targetNumber];
+                    const newAttacksLeft = Math.min(maxAttacks, (memberProfile.attacksLeft || 0) + 1);
+                    const currentMemberConfidence = JSON.parse(memberProfile.confidence || '{}');
+                    if (currentMemberConfidence[targetNumber]) {
+                        delete currentMemberConfidence[targetNumber];
                         console.debug(`${buttonLogPrefix} Confidence for target ${targetNumber} removed from member profile.`);
                     }
-                    await updateMemberProfile(userId, memberProfile);
+                    await updateMemberProfile(warId, userId, { reservedTargets: newReservedTargets, attacksLeft: newAttacksLeft, confidence: currentMemberConfidence });
+                    memberProfile.attacksLeft = newAttacksLeft;
+                    memberProfile.reservedTargets = JSON.stringify(newReservedTargets);
+                    memberProfile.confidence = JSON.stringify(currentMemberConfidence);
                     console.info(`${buttonLogPrefix} Member profile updated after cancellation. Attacks left: ${memberProfile.attacksLeft}`);
 
-                    const warSessionData = await getWarSession(warId);
+                    const warSessionData = await getWar(warId);
                     if (!warSessionData || !warSessionData.messageIds || !warSessionData.messageIds[targetNumber]) {
                         console.error(`${buttonLogPrefix} Message ID not found for cancel: warId=${warId}, targetNumber=${targetNumber}`);
                         return interaction.editReply({ content: '예약 해제는 되었으나, 전쟁 채널의 메시지를 업데이트할 수 없습니다.' });
@@ -187,7 +187,6 @@ module.exports = {
                 }
             } catch (error) {
                 console.error(`${buttonLogPrefix} Button interaction error:`, error);
-                // deferReply가 이미 호출된 상태이므로 editReply 사용
                 try {
                     await interaction.editReply({ content: `처리 중 오류 발생: ${error.message || '알 수 없는 오류가 발생했습니다.'}` });
                 } catch (replyError) {
@@ -205,12 +204,6 @@ module.exports = {
 
             console.info(`${modalLogPrefix} Modal submission received.`);
 
-            if (!firebaseInitialized) {
-                console.error(`${modalLogPrefix} Firestore not initialized. Aborting modal action.`);
-                 try { await interaction.reply({ content: '데이터베이스 연결 문제로 작업을 처리할 수 없습니다. 관리자에게 문의하세요.', ephemeral: true }); } catch(e) { console.warn(`${modalLogPrefix} Firestore init check reply failed:`, e);}
-                return;
-            }
-
             await interaction.deferReply({ ephemeral: true });
             console.debug(`${modalLogPrefix} Reply deferred.`);
 
@@ -226,58 +219,44 @@ module.exports = {
                         return interaction.editReply({ content: '파괴율은 10에서 100 사이의 숫자여야 합니다. 🔢' });
                     }
                     
-                    console.debug(`${modalLogPrefix} Fetching target data for war ${warId}, target ${targetNumber}.`);
-                    let targetData = await getTarget(warId, targetNumber);
-                    if (!targetData) { 
-                        console.error(`${modalLogPrefix} Target data not found for war ${warId}, target ${targetNumber}.`);
-                        return interaction.editReply({ content: '목표 데이터를 찾을 수 없어 파괴율을 저장할 수 없습니다.'});
-                    }
-                    targetData.confidence = targetData.confidence || {};
-                    targetData.confidence[userId] = percentage;
-                    
-                    console.debug(`${modalLogPrefix} Updating target data with new confidence for war ${warId}, target ${targetNumber}.`);
-                    // firestoreHandler에 updateTargetData(warId, targetNumber, dataToUpdate) 같은 함수가 있다면 좋겠지만, 일단 직접 set
-                    // 직접 db 객체 사용 최소화를 위해 firestoreHandler에 함수 추가 고려
-                    if (db) { // db 객체가 null이 아닐 때만 실행 (firebaseInitialized와 별개로)
-                       await db.collection('wars').doc(warId).collection('targets').doc(String(targetNumber)).set(targetData, { merge: true });
-                       console.info(`${modalLogPrefix} Target confidence updated in Firestore for war ${warId}, target ${targetNumber}, user ${userId} with ${percentage}%.`);
-                    } else {
-                        console.error(`${modalLogPrefix} Firestore db object is null. Cannot update target confidence.`);
-                        throw new Error('Firestore db object is null.'); // 에러를 발생시켜 아래 catch에서 처리하도록
-                    }
-                    
-                    console.debug(`${modalLogPrefix} Fetching/updating member profile for confidence update.`);
-                    let memberProfile = await getMemberProfile(userId);
-                    if (!memberProfile) { 
-                        memberProfile = { uid: userId, targets: [], attacksLeft: 2, confidence: {} };
-                         console.info(`${modalLogPrefix} New member profile created for userId: ${userId} during confidence update.`);
-                    }
-                    memberProfile.confidence = memberProfile.confidence || {};
-                    memberProfile.confidence[targetNumber] = percentage;
-                    await updateMemberProfile(userId, memberProfile);
-                    console.info(`${modalLogPrefix} Member profile confidence updated for target ${targetNumber} with ${percentage}%.`);
+                    console.debug(`${modalLogPrefix} Updating target confidence in DB for war ${warId}, target ${targetNumber}, user ${userId} with ${percentage}%.`);
+                    const targetUpdateResult = await updateTargetConfidence(warId, targetNumber, userId, percentage);
 
-                    const warSessionData = await getWarSession(warId);
-                    if (warSessionData && warSessionData.messageIds && warSessionData.messageIds[targetNumber]) {
-                        console.debug(`${modalLogPrefix} War session data found, attempting to update embed.`);
-                        const warChannel = interaction.guild.channels.cache.get(warSessionData.channelId);
-                         if (!warChannel) {
-                            console.error(`${modalLogPrefix} War channel not found: ${warSessionData.channelId} for embed update.`);
-                            // 에러를 반환하지만, 주요 로직은 이미 성공했으므로 사용자에게는 성공 메시지 표시 가능
-                            await interaction.editReply({ content: `✅ 목표 #${targetNumber}에 예상 파괴율 ${percentage}%를 저장했습니다. (채널 메시지 업데이트 실패)` });
-                         } else {
-                            console.debug(`${modalLogPrefix} War channel found: ${warChannel.name}. Fetching message ${warSessionData.messageIds[targetNumber]}.`);
-                            const messageToUpdate = await warChannel.messages.fetch(warSessionData.messageIds[targetNumber]);
-                            console.debug(`${modalLogPrefix} Message to update embed fetched: ${messageToUpdate.id}.`);
-                            // targetData는 위에서 confidence가 추가된 최신 상태
-                            await updateTargetEmbed(messageToUpdate, targetData, warId);
-                            console.info(`${modalLogPrefix} Target embed updated successfully after confidence input.`);
-                            await interaction.editReply({ content: `✅ 목표 #${targetNumber}에 예상 파괴율 ${percentage}%를 저장했습니다!` });
-                         }
-                    } else {
-                        console.warn(`${modalLogPrefix} War session data or messageId not found for war ${warId}, target ${targetNumber}. Cannot update embed.`);
-                        await interaction.editReply({ content: `✅ 목표 #${targetNumber}에 예상 파괴율 ${percentage}%를 저장했습니다. (채널 메시지 업데이트 불가)` });
+                    if (!targetUpdateResult || !targetUpdateResult.updated) {
+                        console.error(`${modalLogPrefix} Failed to update target confidence in DB for war ${warId}, target ${targetNumber}. Result:`, targetUpdateResult);
+                        let errorMessage = '목표 파괴율 업데이트에 실패했습니다.';
+                        if (targetUpdateResult && targetUpdateResult.message) {
+                            errorMessage += ` 이유: ${targetUpdateResult.message}`;
+                        } else if (!targetUpdateResult) {
+                             errorMessage = '목표를 찾을 수 없습니다.'; // updateTargetConfidence에서 target 못 찾으면 Error 발생시키므로, 실제로는 catch 블록으로 갈 것임
+                        }
+                        return interaction.editReply({ content: errorMessage });
                     }
+                    console.info(`${modalLogPrefix} Target confidence updated in DB. Target data:`, targetUpdateResult);
+
+                    console.debug(`${modalLogPrefix} Fetching/updating member profile for confidence update.`);
+                    let memberProfile = await getOrCreateMember(warId, userId);
+                    let memberConfidenceMap = JSON.parse(memberProfile.confidence || '{}');
+                    memberConfidenceMap[targetNumberStr] = percentage; // targetNumber를 문자열 키로 사용 (일관성 유지)
+                    await updateMemberProfile(warId, userId, { confidence: memberConfidenceMap });
+                    console.info(`${modalLogPrefix} Member profile confidence updated for target ${targetNumberStr} to ${percentage}%.`);
+
+                    const warSessionData = await getWar(warId);
+                    if (warSessionData && warSessionData.messageIds && warSessionData.messageIds[targetNumberStr]) {
+                        const warChannel = interaction.guild.channels.cache.get(warSessionData.channelId);
+                        if (warChannel) {
+                            try {
+                                const messageToUpdate = await warChannel.messages.fetch(warSessionData.messageIds[targetNumberStr]);
+                                // targetUpdateResult가 업데이트된 target 객체를 포함하므로 이를 사용
+                                await updateTargetEmbed(messageToUpdate, targetUpdateResult, warId);
+                                console.info(`${modalLogPrefix} Target embed updated with new confidence.`);
+                            } catch (embedUpdateError) {
+                                console.error(`${modalLogPrefix} Error updating target embed after confidence input:`, embedUpdateError);
+                            }
+                        }
+                    }
+
+                    await interaction.editReply({ content: `🎯 목표 #${targetNumberStr}에 대한 예상 파괴율 ${percentage}% (으)로 업데이트 완료!` });
                     console.info(`${modalLogPrefix} Destruction modal processing completed.`);
                 }
             } catch (error) {

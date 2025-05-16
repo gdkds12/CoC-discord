@@ -1,9 +1,8 @@
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType, EmbedBuilder } = require('discord.js');
-const { db, firebaseInitialized } = require('../services/firestoreHandler'); // Firestore 핸들러 가져오기
+const { getWar, saveWar, saveInitialTargets } = require('../utils/databaseHandler'); // Firestore 핸들러 대신 SQLite 핸들러
 const { getCurrentWar } = require('../services/cocApiService'); // CoC API 서비스 추가
 const { createInitialTargetEmbed, createTargetActionRow } = require('../utils/embedRenderer'); // Embed 및 버튼 생성 함수
 // const clashApi = require('../services/clashApiHandler');
-const admin = require('firebase-admin');
 require('dotenv').config(); // .env 파일 로드
 
 const COMMAND_NAME = 'startwar';
@@ -23,11 +22,6 @@ module.exports = {
         if (!guild) {
             console.warn(`${execLogPrefix} Command used outside of a guild. Replying and exiting.`);
             return interaction.reply({ content: '이 명령어는 서버 채널에서만 사용할 수 있습니다.', ephemeral: true });
-        }
-
-        if (!firebaseInitialized) {
-            console.error(`${execLogPrefix} Firestore is not initialized. Replying and exiting.`);
-            return interaction.reply({ content: '봇의 데이터베이스 연결에 문제가 발생했습니다. 관리자에게 문의하세요.', ephemeral: true });
         }
 
         console.debug(`${execLogPrefix} Deferring reply.`);
@@ -76,10 +70,11 @@ module.exports = {
                 return interaction.editReply({ content: 'CoC API에서 전쟁 시작 시간을 가져오는 데 실패했습니다. 잠시 후 다시 시도하거나 관리자에게 문의하세요.', ephemeral: true });
             }
 
-            console.info(`${execLogPrefix} Checking for existing war session in Firestore with warId: ${warId}`);
-            const existingWarSnapshot = await db.collection('wars').doc(warId).get();
-            if (existingWarSnapshot.exists && existingWarSnapshot.data().ended === false) {
-                const existingChannelId = existingWarSnapshot.data().channelId;
+            console.info(`${execLogPrefix} Checking for existing war session in DB with warId: ${warId}`);
+            const existingWar = await getWar(warId); // SQLite 함수로 변경
+
+            if (existingWar && existingWar.state !== 'ended') { // SQLite 스키마에 맞게 조건 변경 (ended 불린 대신 state 문자열)
+                const existingChannelId = existingWar.channelId;
                 console.warn(`${execLogPrefix} War session ${warId} already exists and is ongoing in channel ${existingChannelId}. Replying and exiting.`);
                 return interaction.editReply({ content: `이미 해당 전쟁 세션(\`${warId}\`)이 <#${existingChannelId}> 채널에서 진행 중입니다. 🏁`, ephemeral: true });
             }
@@ -141,6 +136,8 @@ module.exports = {
 
             console.info(`${execLogPrefix} Sending initial target embeds and buttons to channel <#${warChannel.id}> for ${teamSize} targets.`);
             const messageIds = {};
+            const targetsToSave = []; // DB에 저장할 타겟 정보를 담을 배열
+
             for (let i = 1; i <= teamSize; i++) {
                 console.debug(`${execLogPrefix} Creating embed and row for target #${i}, warId: ${warId}`);
                 const embed = createInitialTargetEmbed(i, warId);
@@ -148,15 +145,15 @@ module.exports = {
                 try {
                     const sentMessage = await warChannel.send({ embeds: [embed], components: [row] });
                     messageIds[i] = sentMessage.id;
+                    targetsToSave.push({ targetNumber: i, messageId: sentMessage.id }); // 저장할 타겟 정보 추가
                     console.debug(`${execLogPrefix} Sent message for target #${i}, messageId: ${sentMessage.id}`);
                 } catch (msgError) {
                     console.error(`${execLogPrefix} Failed to send message for target #${i} in channel <#${warChannel.id}>:`, msgError);
-                    // 개별 메시지 실패 시 일단 계속 진행, 추후 오류 리포팅 고려
                 }
             }
             console.info(`${execLogPrefix} Finished sending ${Object.keys(messageIds).length} (expected ${teamSize}) initial messages.`);
 
-            console.info(`${execLogPrefix} Preparing war session data for Firestore (warId: ${warId}).`);
+            console.info(`${execLogPrefix} Preparing war session data for DB (warId: ${warId}).`);
             const warSessionData = {
                 warId: warId,
                 clanTag: clanTag,
@@ -165,21 +162,30 @@ module.exports = {
                 opponentClanLevel: currentWarData.opponent?.clanLevel,
                 teamSize: teamSize,
                 attacksPerMember: currentWarData.attacksPerMember || parseInt(process.env.MAX_ATTACKS_PER_MEMBER) || 2, // API에 있으면 쓰고 없으면 환경변수, 그것도 없으면 2
-                preparationStartTime: currentWarData.preparationStartTime !== '0001-01-01T00:00:00.000Z' ? admin.firestore.Timestamp.fromDate(new Date(currentWarData.preparationStartTime)) : null,
-                startTime: currentWarData.startTime !== '0001-01-01T00:00:00.000Z' ? admin.firestore.Timestamp.fromDate(new Date(currentWarData.startTime)) : null,
-                endTime: currentWarData.endTime !== '0001-01-01T00:00:00.000Z' ? admin.firestore.Timestamp.fromDate(new Date(currentWarData.endTime)) : null,
-                state: currentWarData.state, // API에서 가져온 전쟁 상태 ('preparation', 'inWar', 'warEnded')
+                preparationStartTime: currentWarData.preparationStartTime !== '0001-01-01T00:00:00.000Z' ? new Date(currentWarData.preparationStartTime).toISOString() : null,
+                startTime: currentWarData.startTime !== '0001-01-01T00:00:00.000Z' ? new Date(currentWarData.startTime).toISOString() : null,
+                endTime: currentWarData.endTime !== '0001-01-01T00:00:00.000Z' ? new Date(currentWarData.endTime).toISOString() : null,
+                state: currentWarData.state,
                 channelId: warChannel.id,
-                messageIds: messageIds,
+                messageIds: messageIds, // messageIds는 wars 테이블에 JSON 문자열로 저장됨
                 createdBy: user.id,
-                createdAt: admin.firestore.FieldValue.serverTimestamp(),
-                ended: currentWarData.state === 'warEnded' ? true : false, // API 상태에 따라 초기 종료 상태 설정
-                // endedAt, endedBy는 /endwar 명령어에서 설정
+                createdAt: new Date().toISOString(), // Firestore의 serverTimestamp() 대신 ISO 문자열
+                // ended, endedAt, endedBy는 endwar 명령어 또는 상태 변경시 업데이트
             };
-            console.debug(`${execLogPrefix} War session data prepared:`, { warId, clanTag, opponentClanTag: warSessionData.opponentClanTag, teamSize, channelId: warSessionData.channelId, state: warSessionData.state, messageIdsCount: Object.keys(messageIds).length });
+            // console.debug(`${execLogPrefix} War session data prepared:`, warSessionData); // 전체 객체 로깅은 민감할 수 있으므로 주요 정보만 로깅하도록 변경됨
+            console.debug(`${execLogPrefix} War session data prepared:`, { warId, clanTag, teamSize, channelId: warSessionData.channelId, state: warSessionData.state, messageIdsCount: Object.keys(messageIds).length });
 
-            await db.collection('wars').doc(warId).set(warSessionData);
-            console.info(`${execLogPrefix} War session ${warId} data saved to Firestore for channel <#${warChannel.name}>.`);
+            await saveWar(warSessionData); // SQLite 함수로 변경
+            console.info(`${execLogPrefix} War session ${warId} data saved to DB for channel <#${warChannel.name}>.`);
+
+            // targetsToSave 배열에 있는 데이터를 targets 테이블에 저장
+            if (targetsToSave.length > 0) {
+                console.info(`${execLogPrefix} Saving ${targetsToSave.length} initial targets to DB for warId: ${warId}.`);
+                await saveInitialTargets(warId, targetsToSave);
+                console.info(`${execLogPrefix} Initial targets saved to DB.`);
+            } else {
+                console.warn(`${execLogPrefix} No targets were prepared to be saved for warId: ${warId}. This might indicate an issue with message sending.`);
+            }
 
             console.info(`${execLogPrefix} Sending opponent clan info embed to <#${warChannel.id}>.`);
             const opponentEmbed = new EmbedBuilder()

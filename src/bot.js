@@ -38,13 +38,20 @@ for (const file of eventFiles) {
     }
 }
 
-// Firestore 초기화 (추후 구현)
-// const admin = require('firebase-admin');
-// const serviceAccount = require(process.env.FIREBASE_KEY_PATH);
-// admin.initializeApp({
-// credential: admin.credential.cert(serviceAccount)
-// });
-// const db = admin.firestore();
+// SQLite 데이터베이스 초기화
+const { initializeDatabase } = require('./utils/databaseHandler');
+
+initializeDatabase()
+    .then(() => {
+        console.log('[DB Info] 데이터베이스가 성공적으로 초기화되었습니다.');
+        // 봇 토큰으로 로그인
+        console.log('[INFO] 봇 로그인을 시도합니다...');
+        client.login(process.env.DISCORD_TOKEN);
+    })
+    .catch(err => {
+        console.error('[DB Error] 데이터베이스 초기화 실패:', err);
+        process.exit(1); // 데이터베이스 초기화 실패 시 프로세스 종료
+    });
 
 // Clash API 클라이언트 (추후 구현)
 
@@ -58,9 +65,5 @@ client.once('ready', () => {
     });
     console.log('[INFO] 로드된 명령어 개수:', client.commands.size);
 });
-
-// 봇 토큰으로 로그인
-console.log('[INFO] 봇 로그인을 시도합니다...');
-client.login(process.env.DISCORD_TOKEN);
 
 console.log('CoC Collaborative War-Map Planner 봇이 준비되었습니다.'); 
