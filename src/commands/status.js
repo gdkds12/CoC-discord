@@ -178,105 +178,180 @@ module.exports = {
                 .setDescription(warData.state === 'ended' ? '종료된 전쟁입니다.' : `**상태**: ${currentWarApiData?.state || warData.state}`)
                 .setFooter({ text: '최대한 CoC API 실시간 데이터를 우선으로 표시합니다.' });
 
-            // 전쟁 개요
-            statusEmbed.addFields(
-                { name: '\u200B', value: '**📊 전쟁 개요 (API 기준)**' },
-                { name: '팀 크기', value: `${currentWarApiData?.clan?.members?.length || warData.teamSize} vs ${currentWarApiData?.opponent?.members?.length || warData.teamSize}`, inline: true },
-                { name: '공격권/인', value: `${attacksPerMemberSetting}회`, inline: true },
-                { name: '생성일', value: `<t:${Math.floor(new Date(warData.createdAt).getTime() / 1000)}:f>`, inline: true }
-            );
-            if (currentWarApiData && currentWarApiData.clan && currentWarApiData.clan.members) {
-                statusEmbed.addFields(
-                    { name: '공격 사용률', value: `${totalAttacksUsedApi} / ${totalPossibleAttacksApi} (${attackUsageRateApi.toFixed(1)}%)`, inline: true },
-                    { name: '남은 총 공격', value: `${totalPossibleAttacksApi - totalAttacksUsedApi}회`, inline: true }
-                );
+            let fieldsAddedCount = 0;
+            const MAX_FIELDS = 25;
+
+            // Helper function to add fields if space allows
+            const addFieldsSafely = (fields) => {
+                const fieldsToAdd = Array.isArray(fields) ? fields : [fields];
+                if (fieldsAddedCount + fieldsToAdd.length <= MAX_FIELDS) {
+                    statusEmbed.addFields(...fieldsToAdd);
+                    fieldsAddedCount += fieldsToAdd.length;
+                    return true;
+                }
+                return false;
+            };
+            
+            // Helper function to add a single field if space allows
+            const addFieldSafely = (name, value, inline = false) => {
+                if (fieldsAddedCount < MAX_FIELDS) {
+                    statusEmbed.addFields({ name, value, inline });
+                    fieldsAddedCount++;
+                    return true;
+                }
+                return false;
             }
-            statusEmbed.addFields({ name: '미공격 타겟(DB)', value: `${unattackedTargets.length}개`, inline: true });
+
+            // 전쟁 개요
+            // 섹션 제목 필드 + 팀 크기, 공격권/인, 생성일 필드 = 4개
+            // 공격 사용률, 남은 총 공격 필드 (조건부) = 2개
+            // 미공격 타겟 필드 = 1개
+            // 최대 7개 필드
+            if (fieldsAddedCount < MAX_FIELDS) {
+                const overviewFields = [];
+                overviewFields.push({ name: '\u200B', value: '**📊 전쟁 개요 (API 기준)**' });
+                overviewFields.push({ name: '팀 크기', value: `${currentWarApiData?.clan?.members?.length || warData.teamSize} vs ${currentWarApiData?.opponent?.members?.length || warData.teamSize}`, inline: true });
+                overviewFields.push({ name: '공격권/인', value: `${attacksPerMemberSetting}회`, inline: true });
+                overviewFields.push({ name: '생성일', value: `<t:${Math.floor(new Date(warData.createdAt).getTime() / 1000)}:f>`, inline: true });
+                
+                if (currentWarApiData && currentWarApiData.clan && currentWarApiData.clan.members) {
+                    overviewFields.push({ name: '공격 사용률', value: `${totalAttacksUsedApi} / ${totalPossibleAttacksApi} (${attackUsageRateApi.toFixed(1)}%)`, inline: true });
+                    overviewFields.push({ name: '남은 총 공격', value: `${totalPossibleAttacksApi - totalAttacksUsedApi}회`, inline: true });
+                }
+                overviewFields.push({ name: '미공격 타겟(DB)', value: `${unattackedTargets.length}개`, inline: true });
+                
+                addFieldsSafely(overviewFields);
+            }
+
 
             // CoC API 실시간 정보
+            // 섹션 제목 필드 + 우리팀, 상대팀 필드 = 3개
+            // 종료까지 필드 (조건부) = 1개
+            // 최대 4개 필드
             if (currentWarApiData && currentWarApiData.state !== 'notInWar') {
-                statusEmbed.addFields(
-                    { name: '\u200B', value: '**📡 CoC API 점수판**' },
-                    { name: `우리팀: ${currentWarApiData.clan.name || '클랜'}`, value: `${currentWarApiData.clan.stars || 0}⭐ (${(currentWarApiData.clan.destructionPercentage || 0).toFixed(2)}%)`, inline: true },
-                    { name: `상대팀: ${currentWarApiData.opponent.name || '상대클랜'}`, value: `${currentWarApiData.opponent.stars || 0}⭐ (${(currentWarApiData.opponent.destructionPercentage || 0).toFixed(2)}%)`, inline: true }
-                );
-                if (currentWarApiData.endTime) {
-                    statusEmbed.addFields({ name: '종료까지', value: `<t:${Math.floor(new Date(currentWarApiData.endTime).getTime() / 1000)}:R>`, inline: true });
+                const cocApiScoreboardFields = [];
+                if (fieldsAddedCount + 1 <= MAX_FIELDS) { // 섹션 타이틀 공간 확인
+                    cocApiScoreboardFields.push({ name: '\u200B', value: '**📡 CoC API 점수판**' });
+                    cocApiScoreboardFields.push({ name: `우리팀: ${currentWarApiData.clan.name || '클랜'}`, value: `${currentWarApiData.clan.stars || 0}⭐ (${(currentWarApiData.clan.destructionPercentage || 0).toFixed(2)}%)`, inline: true });
+                    cocApiScoreboardFields.push({ name: `상대팀: ${currentWarApiData.opponent.name || '상대클랜'}`, value: `${currentWarApiData.opponent.stars || 0}⭐ (${(currentWarApiData.opponent.destructionPercentage || 0).toFixed(2)}%)`, inline: true });
+                    
+                    if (currentWarApiData.endTime && fieldsAddedCount + cocApiScoreboardFields.length < MAX_FIELDS) {
+                         cocApiScoreboardFields.push({ name: '종료까지', value: `<t:${Math.floor(new Date(currentWarApiData.endTime).getTime() / 1000)}:R>`, inline: true });
+                    }
+                    addFieldsSafely(cocApiScoreboardFields);
                 }
             }
 
             // 클랜원 활동 현황 (API 기반)
-            if (clanMembersInfo.length > 0) {
-                statusEmbed.addFields({ name: '\u200B', value: '**👤 클랜원 현황 (API 기준)**' });
-                let memberFieldsCount = 0;
-                for (const member of clanMembersInfo) {
-                    if (memberFieldsCount < 6) { // 너무 많으면 잘릴 수 있으니 일부만 표시 (예시)
-                        statusEmbed.addFields({
-                            name: `${member.mapPosition}. ${member.cocName.substring(0,15)} ${member.townhallLevel ? `TH${member.townhallLevel}` : ''}`,
-                            value: `> 공격: ${member.attacksMade}/${attacksPerMemberSetting} (남음: ${member.attacksLeft})\n> Discord: ${member.discordMention}`,
-                            inline: true
-                        });
-                        memberFieldsCount++;
+            // 섹션 제목 필드 = 1개
+            // 멤버당 필드 = 1개
+            // 공격권 남은 인원 필드 = 1개
+            // 요약 필드 = 1개
+            if (clanMembersInfo.length > 0 && fieldsAddedCount < MAX_FIELDS) {
+                if (addFieldSafely('\u200B', '**👤 클랜원 현황 (API 기준)**')) {
+                    let memberFieldsAddedInternally = 0;
+                    const maxMemberFieldsToShow = MAX_FIELDS - fieldsAddedCount - (unattackedClanMembersApi.length > 0 ? 1 : 0) - 1; // 남은 필드 슬롯 (공격권 남은 인원, 요약 필드 고려)
+
+                    for (const member of clanMembersInfo) {
+                        if (memberFieldsAddedInternally < maxMemberFieldsToShow && memberFieldsAddedInternally < 6) { // 최대 6명 또는 남은 공간까지
+                           if (addFieldSafely(
+                                `${member.mapPosition}. ${member.cocName.substring(0,15)} ${member.townhallLevel ? `TH${member.townhallLevel}` : ''}`,
+                                `> 공격: ${member.attacksMade}/${attacksPerMemberSetting} (남음: ${member.attacksLeft})\n> Discord: ${member.discordMention}`,
+                                true
+                            )) {
+                                memberFieldsAddedInternally++;
+                            } else {
+                                break; // 더 이상 필드 추가 불가
+                            }
+                        } else {
+                            break; // 표시 제한 도달
+                        }
+                    }
+
+                    if (unattackedClanMembersApi.length > 0) {
+                         addFieldSafely('공격권 남은 인원', unattackedClanMembersApi.slice(0, Math.max(0, MAX_FIELDS - fieldsAddedCount)).join(', ') || '없음', false);
+                    }
+                    if (clanMembersInfo.length > memberFieldsAddedInternally) {
+                        addFieldSafely('더 많은 클랜원 정보...', `총 ${clanMembersInfo.length}명 중 ${memberFieldsAddedInternally}명 표시됨.`, false);
                     }
                 }
-                if (unattackedClanMembersApi.length > 0) {
-                     statusEmbed.addFields({ name: '공격권 남은 인원', value: unattackedClanMembersApi.join(', ') || '없음', inline: false });
-                }
-                 if(clanMembersInfo.length > memberFieldsCount) {
-                    statusEmbed.addFields({ name: '더 많은 클랜원 정보...', value: `총 ${clanMembersInfo.length}명 중 ${memberFieldsCount}명 표시됨.`, inline: false });
-                }
-
-            } else {
-                statusEmbed.addFields({ name: '\u200B', value: '**👤 클랜원 현황**' }, { name: '정보 없음', value: 'CoC API에서 클랜원 정보를 가져올 수 없거나 전쟁 참여자가 없습니다.', inline: false });
+            } else if (fieldsAddedCount < MAX_FIELDS) {
+                addFieldsSafely([
+                    { name: '\u200B', value: '**👤 클랜원 현황**' }, 
+                    { name: '정보 없음', value: 'CoC API에서 클랜원 정보를 가져오거나 전쟁 참여자가 없습니다.', inline: false }
+                ]);
             }
             
-            // 목표별 상세 현황 (기존과 유사)
-            if (targets && targets.length > 0) {
-                statusEmbed.addFields({ name: '\u200B', value: '**🎯 타겟 상세 (DB 기준)**' });
-                let targetFieldsCount = 0;
-                targets.slice(0, 9).forEach(target => { // 최대 9개 타겟 정보 표시 (임베드 필드 제한 고려)
-                    if (targetFieldsCount < 9) {
-                        const reservedByDisplay = target.reservedBy && target.reservedBy.length > 0 ? target.reservedBy.map(id => `<@${id}>`).join(', ') : '-';
-                        const confidenceEntries = target.confidence ? Object.entries(target.confidence) : [];
-                        const confidenceDisplay = confidenceEntries.length > 0 
-                            ? confidenceEntries.map(([userId, perc]) => {
-                                const dbUser = dbMembers.find(m => m.userId === userId);
-                                return `${dbUser ? `<@${dbUser.userId}>` : userId.slice(0,4)}:${perc}%`;
-                              }).join(' ') 
-                            : '-';
-                        
-                        let resultDisplay = '- (`미입력`)';
-                        if (target.result && target.result.stars !== undefined && target.result.stars > -1) {
-                            let attackerDisplay = '';
-                            if (target.result.attackerDiscordId) {
-                                attackerDisplay = `(<@${target.result.attackerDiscordId}>)`;
-                            } else if (target.result.attackerCocTag) {
-                                // API 클랜 멤버 정보에서 해당 COC 태그의 멤버 이름 찾기
-                                const apiAttacker = clanMembersInfo.find(m => m.cocTag === target.result.attackerCocTag);
-                                attackerDisplay = apiAttacker ? `(${apiAttacker.cocName.substring(0,10)}...)` : `(COC:${target.result.attackerCocTag.slice(-4)})`;
-                            }
-                            resultDisplay = `${target.result.stars}⭐ ${target.result.destruction}% ${attackerDisplay}`.trim();
-                        }
+            // 목표별 상세 현황 (DB 기준)
+            // 섹션 제목 필드 = 1개
+            // 타겟당 필드 = 1개
+            // 요약 필드 = 1개
+            if (targets && targets.length > 0 && fieldsAddedCount < MAX_FIELDS) {
+                if (addFieldSafely('\u200B', '**🎯 타겟 상세 (DB 기준)**')) {
+                    let targetFieldsAddedInternally = 0;
+                    // 타겟 표시는 일반적으로 한 줄에 3개씩 들어가므로, 1개의 필드가 1개의 타겟 정보를 의미.
+                    // 남은 필드 수 - 요약 필드(1) 만큼 타겟 표시 가능
+                    const maxTargetFieldsToShow = MAX_FIELDS - fieldsAddedCount - 1; 
 
-                        const title = `🎯#${target.targetNumber} ${target.opponentName || '상대'} ${target.opponentTownhallLevel ? '(TH' + target.opponentTownhallLevel + ')' : ''}`;
-                        statusEmbed.addFields({
-                            name: title,
-                            value: `> 예약: ${reservedByDisplay}\n> 예상: ${confidenceDisplay}\n> 결과: ${resultDisplay}`,
-                            inline: true
-                        });
-                        targetFieldsCount++;
+                    for (const target of targets) {
+                        if (targetFieldsAddedInternally < maxTargetFieldsToShow && targetFieldsAddedInternally < 9) { // 최대 9개 또는 남은 공간까지
+                            const reservedByDisplay = target.reservedBy && target.reservedBy.length > 0 ? target.reservedBy.map(id => `<@${id}>`).join(', ') : '-';
+                            const confidenceEntries = target.confidence ? Object.entries(target.confidence) : [];
+                            const confidenceDisplay = confidenceEntries.length > 0 
+                                ? confidenceEntries.map(([userId, perc]) => {
+                                    const dbUser = dbMembers.find(m => m.userId === userId);
+                                    return `${dbUser ? `<@${dbUser.userId}>` : userId.slice(0,4)}:${perc}%`;
+                                  }).join(' ') 
+                                : '-';
+                            
+                            let resultDisplay = '- (`미입력`)';
+                            let attackerDisplay = '';
+                            if (target.result && target.result.stars !== undefined && target.result.stars > -1) {
+                                if (target.result.attackerDiscordId) {
+                                    attackerDisplay = `<@${target.result.attackerDiscordId}>`;
+                                } else if (target.result.attackerCocTag) {
+                                    const attackerClanMember = clanMembersInfo.find(m => m.cocTag === target.result.attackerCocTag);
+                                    attackerDisplay = attackerClanMember ? `${attackerClanMember.cocName} (${attackerClanMember.cocTag.slice(-4)})` : target.result.attackerCocTag;
+                                } else {
+                                    attackerDisplay = '`API 기록`'; // 자동 업데이트 되었으나 매칭 안된 경우
+                                }
+                                resultDisplay = `${target.result.stars}⭐ ${target.result.destruction}% (${attackerDisplay})`;
+                            }
+
+                            if (addFieldSafely(
+                                `#${target.targetNumber} (${target.townhallLevel || 'TH?'}) ${target.nickname ? `- ${target.nickname.substring(0,10)}` : ''}`,
+                                `> 예약: ${reservedByDisplay}\n> 예상: ${confidenceDisplay}\n> 결과: ${resultDisplay}`,
+                                true
+                            )) {
+                                targetFieldsAddedInternally++;
+                            } else {
+                                break; // 더 이상 필드 추가 불가
+                            }
+                        } else {
+                            break; // 표시 제한 도달
+                        }
                     }
-                });
-                 if (targets.length > targetFieldsCount) {
-                    statusEmbed.addFields({ name: '더 많은 타겟 정보...', value: `총 ${targets.length}개 타겟 중 ${targetFieldsCount}개 표시됨.`, inline: false });
+                    if (targets.length > targetFieldsAddedInternally) {
+                        addFieldSafely('더 많은 타겟 정보...', `총 ${targets.length}개 중 ${targetFieldsAddedInternally}개 표시됨.`, false);
+                    }
                 }
+            } else if (fieldsAddedCount < MAX_FIELDS && (!targets || targets.length === 0)) {
+                 addFieldSafely('\u200B', '**🎯 타겟 상세 (DB 기준)**');
+                 addFieldSafely('타겟 정보 없음', 'DB에 저장된 타겟 정보가 없습니다.', false);
             }
 
-            await interaction.editReply({ 
-                embeds: [statusEmbed],
-                flags: [MessageFlags.Ephemeral]
-            });
-            console.info(`${execLogPrefix} Status command completed successfully.${updatedResultsCount > 0 ? ` ${updatedResultsCount} results updated from API.` : ''}`);
+
+            if (updatedResultsCount > 0 && fieldsAddedCount < MAX_FIELDS) {
+                 addFieldSafely('🔄 API 결과 반영', `${updatedResultsCount}개의 공격 결과가 API로부터 자동 업데이트 되었습니다.`, false);
+            }
+            
+            // 최종적으로 필드 수가 0개면 (아무 정보도 추가 못했으면) 기본 메시지
+            if (fieldsAddedCount === 0) {
+                statusEmbed.setDescription("표시할 정보가 없거나, 필드 제한으로 인해 정보를 표시할 수 없습니다. 나중에 다시 시도해주세요.");
+            }
+
+            console.info(`${execLogPrefix} Total fields added to embed: ${fieldsAddedCount}`);
+            return interaction.editReply({ embeds: [statusEmbed], flags: [MessageFlags.Ephemeral] });
 
         } catch (error) {
             console.error(`${execLogPrefix} Error in status command:`, error);
@@ -290,4 +365,4 @@ module.exports = {
             }
         }
     }
-}; 
+};
